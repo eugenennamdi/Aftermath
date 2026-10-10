@@ -24,6 +24,13 @@ export function redactEmail(email: string | null | undefined): string {
   return `${visible}***@${domain}`;
 }
 
+export type MatchStatus = 'VERIFIED' | 'MISMATCH' | 'UNKNOWN' | 'NOT_APPLICABLE';
+export type PaymentVerificationState =
+  | 'PROVIDER_VERIFIED'
+  | 'SIMULATED_FIXTURE'
+  | 'VERIFICATION_FAILED'
+  | 'UNVERIFIED';
+
 export interface OperationsOverview {
   metrics: {
     totalIncidents: number;
@@ -33,7 +40,7 @@ export interface OperationsOverview {
     openIncidents: number;
     activeEntitlements: number;
     totalOrders: number;
-    resolutionRate: number; // percentage (0 - 100)
+    resolutionRate: number | null; // percentage (0 - 100), or null if 0 incidents
   };
   workerFleet: {
     activeWorkersCount: number;
@@ -142,13 +149,18 @@ export interface IncidentDetailView {
     createdAt: Date;
   }>;
   evidenceDossier: {
-    amountMatched: boolean;
-    currencyMatched: boolean;
-    customerMatched: boolean;
-    paymentVerified: boolean;
+    amountExpected: number;
+    amountVerified: number | null;
+    amountMatched: MatchStatus;
+    currencyExpected: string;
+    currencyVerified: string | null;
+    currencyMatched: MatchStatus;
+    customerExpected: string;
+    customerVerified: string | null;
+    customerMatched: MatchStatus;
+    paymentVerificationState: PaymentVerificationState;
     entitlementActive: boolean;
     gateAuthorized: boolean;
-    verificationType: 'LIVE_SONNET_SIMULATED_PAYSTACK' | 'LIVE_GEMINI_SIMULATED_PAYSTACK' | 'LIVE_PAYSTACK' | 'SIMULATED_FIXTURE';
   };
   neatlogsTrace: {
     traceId: string | null;
@@ -191,9 +203,34 @@ export class QueryService {
         )
       );
 
-    const activeWorkerSet = new Set(
-      activeLeases.map((l) => l.leaseOwner).filter((w): w is string => Boolean(w))
-    );
+    // Also inspect recent worker activity in audit logs within the last 60 seconds
+    const recentWorkerLogs = await db
+      .select({
+        actor: auditLogs.actor,
+        details: auditLogs.details,
+      })
+      .from(auditLogs)
+      .where(
+        and(
+          sql`${auditLogs.createdAt} > now() - interval '60 seconds'`,
+          sql`${auditLogs.actor} = 'RECOVERY_WORKER'`
+        )
+      );
+
+    const activeWorkerSet = new Set<string>();
+    for (const l of activeLeases) {
+      if (l.leaseOwner) activeWorkerSet.add(l.leaseOwner);
+    }
+    for (const log of recentWorkerLogs) {
+      if (log.details) {
+        try {
+          const parsed = JSON.parse(log.details);
+          if (parsed.workerId) activeWorkerSet.add(parsed.workerId);
+        } catch {
+          // not JSON, continue
+        }
+      }
+    }
     const activeWorkerIds = Array.from(activeWorkerSet);
 
     // Recent activity audit trail (latest 10)
@@ -213,7 +250,7 @@ export class QueryService {
 
     const totalInc = counts?.totalIncidents ?? 0;
     const resolvedInc = counts?.resolvedIncidents ?? 0;
-    const resolutionRate = totalInc > 0 ? Math.round((resolvedInc / totalInc) * 100) : 100;
+    const resolutionRate = totalInc > 0 ? Math.round((resolvedInc / totalInc) * 100) : null;
 
     return {
       metrics: {
@@ -409,23 +446,102 @@ export class QueryService {
       new Date(ent!.expiresAt).getTime() > now;
 
     // Synthesize evidence dossier checks
-    const paymentVerified = Boolean(
-      incident.lastDecision === 'PROPOSE_RECOVERY' ||
-      incident.lastDecision === 'RECONCILE_EXISTING' ||
-      incident.status === 'RESOLVED' ||
-      pEvents.some((e) => e.status === 'success')
-    );
-
     const gateAuthorized = Boolean(
       incident.status === 'RESOLVED' ||
       incident.status === 'PROVISIONED' ||
       logs.some((l) => l.action === 'ENTITLEMENT_PROVISIONED' || l.action === 'INCIDENT_RESOLVED')
     );
 
-    // Attempt to extract neatlogs trace info from audit logs or environment
-    const traceId = `trace_${incident.id.replace(/^inc_/, '')}`;
+    // Determine simulation vs provider verification
+    const isSimulated = logs.some((l) => {
+      if (!l.details) return false;
+      return l.details.includes('TEST_FIXTURE') || l.details.includes('SIMULATED') || l.details.includes('Simulated');
+    }) || Boolean(incident.errorDetail?.includes('SIMULATED'));
+
+    let paymentVerificationState: PaymentVerificationState = 'UNVERIFIED';
+    if (isSimulated) {
+      paymentVerificationState = 'SIMULATED_FIXTURE';
+    } else if (pEvents.some((e) => e.status === 'success') || incident.status === 'RESOLVED') {
+      paymentVerificationState = 'PROVIDER_VERIFIED';
+    } else if (incident.status === 'ESCALATED' || pEvents.some((e) => e.status === 'failed')) {
+      paymentVerificationState = 'VERIFICATION_FAILED';
+    }
+
+    // Determine truthful match status and verified amounts
+    const amountExpected = order.expectedAmount;
+    let amountVerified: number | null = null;
+    let amountMatched: MatchStatus = 'UNKNOWN';
+
+    const currencyExpected = order.currency;
+    let currencyVerified: string | null = null;
+    let currencyMatched: MatchStatus = 'UNKNOWN';
+
+    const customerExpected = redactEmail(customer.email);
+    let customerVerified: string | null = null;
+    let customerMatched: MatchStatus = 'UNKNOWN';
+
+    if (pEvents.length > 0) {
+      const latest = pEvents[pEvents.length - 1];
+      amountVerified = latest.amount;
+      amountMatched = latest.amount === order.expectedAmount ? 'VERIFIED' : 'MISMATCH';
+
+      currencyVerified = latest.currency;
+      currencyMatched = latest.currency.toUpperCase() === order.currency.toUpperCase() ? 'VERIFIED' : 'MISMATCH';
+
+      customerVerified = redactEmail(latest.customerEmail);
+      customerMatched = latest.customerEmail.toLowerCase() === customer.email.toLowerCase() ? 'VERIFIED' : 'MISMATCH';
+    } else if (gateAuthorized) {
+      // Deterministic gate strictly verifies mathematical equality before authorizing
+      amountVerified = order.expectedAmount;
+      amountMatched = 'VERIFIED';
+
+      currencyVerified = order.currency;
+      currencyMatched = 'VERIFIED';
+
+      customerVerified = redactEmail(customer.email);
+      customerMatched = 'VERIFIED';
+    } else if (incident.status === 'ESCALATED') {
+      const errText = `${incident.decisionSummary || ''} ${incident.errorDetail || ''} ${incident.reason || ''}`;
+      
+      const amountMatchRegex = /Paid amount \((\d+)\)/i.exec(errText);
+      if (amountMatchRegex) {
+        amountVerified = parseInt(amountMatchRegex[1], 10);
+        amountMatched = 'MISMATCH';
+      } else if (/amount/i.test(errText) && (/mismatch|does not match|underpaid/i.test(errText))) {
+        amountMatched = 'MISMATCH';
+      }
+
+      if (/currency/i.test(errText) && (/mismatch|does not match/i.test(errText))) {
+        currencyMatched = 'MISMATCH';
+      }
+
+      if (/payer email|customer email/i.test(errText) && (/mismatch|does not match/i.test(errText))) {
+        customerMatched = 'MISMATCH';
+      }
+    }
+
+    // Extract genuine neatlogs trace if captured in audit logs
+    let genuineTraceId: string | null = null;
+    for (const log of logs) {
+      if (log.details) {
+        try {
+          const parsed = JSON.parse(log.details);
+          if (parsed.traceId && typeof parsed.traceId === 'string') {
+            genuineTraceId = parsed.traceId;
+            break;
+          }
+        } catch {
+          const match = /traceId['":\s]+([a-zA-Z0-9_-]{16,64})/.exec(log.details);
+          if (match) {
+            genuineTraceId = match[1];
+            break;
+          }
+        }
+      }
+    }
+
     const neatlogsEndpoint = process.env.NEATLOGS_ENDPOINT || 'https://neatlogs.com';
-    const traceUrl = `${neatlogsEndpoint}/app/traces/${traceId}`;
+    const traceUrl = genuineTraceId ? `${neatlogsEndpoint}/app/traces/${genuineTraceId}` : null;
 
     return {
       incident: {
@@ -491,16 +607,21 @@ export class QueryService {
       })),
       auditTrail: logs,
       evidenceDossier: {
-        amountMatched: true,
-        currencyMatched: true,
-        customerMatched: true,
-        paymentVerified,
+        amountExpected,
+        amountVerified,
+        amountMatched,
+        currencyExpected,
+        currencyVerified,
+        currencyMatched,
+        customerExpected,
+        customerVerified,
+        customerMatched,
+        paymentVerificationState,
         entitlementActive: isEntActive,
         gateAuthorized,
-        verificationType: 'LIVE_SONNET_SIMULATED_PAYSTACK',
       },
       neatlogsTrace: {
-        traceId,
+        traceId: genuineTraceId,
         traceUrl,
         workflowName: process.env.NEATLOGS_WORKFLOW_NAME || 'aftermath-recovery',
       },

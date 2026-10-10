@@ -1,7 +1,7 @@
 import { eq, desc } from 'drizzle-orm';
 import { db } from '../db';
 import { orders, subscriptionPlans, customers, paymentEvents, entitlements, incidents, auditLogs } from '../db/schema';
-import { paystackClient, type PaystackVerificationOutcome } from '../lib/paystack';
+import { paystackClient, type PaystackVerificationOutcome, type PaystackVerificationAdapter } from '../lib/paystack';
 import { sanitizeTelemetryPayload } from '../lib/neatlogs';
 import { trace } from 'neatlogs';
 
@@ -191,14 +191,18 @@ export async function inspectPaymentEvidence(paymentReference: string): Promise<
 /**
  * 3. Independently verify transaction against Paystack API.
  */
-export async function verifyPaystackTransaction(paymentReference: string): Promise<VerifyPaystackToolResult> {
+export async function verifyPaystackTransaction(
+  paymentReference: string,
+  adapter?: PaystackVerificationAdapter
+): Promise<VerifyPaystackToolResult> {
   return await trace(
     { name: 'verify_paystack_transaction', kind: 'TOOL' },
     async (toolSpan) => {
       toolSpan?.setAttribute('tool.name', 'verify_paystack_transaction');
       toolSpan?.setAttribute('tool.input', JSON.stringify(sanitizeTelemetryPayload({ paymentReference })));
 
-      const outcome: PaystackVerificationOutcome = await paystackClient.verifyTransaction(paymentReference);
+      const client = adapter || paystackClient;
+      const outcome: PaystackVerificationOutcome = await client.verifyTransaction(paymentReference);
 
       let output: VerifyPaystackToolResult;
       if (outcome.outcome === 'SUCCESS') {
@@ -209,7 +213,9 @@ export async function verifyPaystackTransaction(paymentReference: string): Promi
           amount: outcome.amount,
           currency: outcome.currency,
           customerEmail: outcome.customerEmail,
-          paidAt: outcome.paidAt.toISOString(),
+          paidAt: outcome.paidAt
+            ? (outcome.paidAt instanceof Date ? outcome.paidAt.toISOString() : new Date(outcome.paidAt).toISOString())
+            : new Date().toISOString(),
           gatewayResponse: outcome.gatewayResponse,
         };
       } else if (outcome.outcome === 'API_ERROR') {

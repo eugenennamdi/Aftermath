@@ -108,7 +108,11 @@ export class RecoveryService {
     incidentId: string,
     fencingToken: number,
     leaseOwner: string,
-    investigation: InvestigationResult
+    investigation: InvestigationResult,
+    options?: {
+      paystackAdapter?: import('../lib/paystack').PaystackVerificationAdapter;
+      executionMode?: string;
+    }
   ): Promise<RecoveryExecutionOutcome> {
     return await trace(
       {
@@ -355,7 +359,11 @@ export class RecoveryService {
           // 6. Record audit log for intermediate state
           await tx`
             INSERT INTO audit_logs (id, order_id, incident_id, action, actor, details, created_at)
-            VALUES (${provisionAuditId}, ${orderData.order.id}, ${incidentId}, 'ENTITLEMENT_PROVISIONED', 'RECOVERY_WORKER', ${`Entitlement ${finalEntId} provisioned; awaiting independent verification`}, now())
+            VALUES (${provisionAuditId}, ${orderData.order.id}, ${incidentId}, 'ENTITLEMENT_PROVISIONED', 'RECOVERY_WORKER', ${JSON.stringify({
+              message: `Entitlement ${finalEntId} provisioned; awaiting independent verification`,
+              entitlementId: finalEntId,
+              executionMode: options?.executionMode || 'PRODUCTION',
+            })}, now())
           `;
 
           return { entitlementId: finalEntId };
@@ -441,7 +449,11 @@ export class RecoveryService {
 
           await tx`
             INSERT INTO audit_logs (id, order_id, incident_id, action, actor, details, created_at)
-            VALUES (${resolveAuditId}, ${orderData.order.id}, ${incidentId}, 'INCIDENT_RESOLVED', 'RECOVERY_WORKER', ${`Autonomous recovery verified: Entitlement ${activeRecord.entitlement.id} confirmed ACTIVE`}, now())
+            VALUES (${resolveAuditId}, ${orderData.order.id}, ${incidentId}, 'INCIDENT_RESOLVED', 'RECOVERY_WORKER', ${JSON.stringify({
+              message: `Autonomous recovery verified: Entitlement ${activeRecord.entitlement.id} confirmed ACTIVE`,
+              entitlementId: activeRecord.entitlement.id,
+              executionMode: options?.executionMode || 'PRODUCTION',
+            })}, now())
           `;
         });
 

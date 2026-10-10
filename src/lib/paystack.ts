@@ -53,6 +53,15 @@ export type PaystackVerificationOutcome =
     };
 
 /**
+ * Scoped Verification Adapter Interface for Paystack transactions.
+ * Allows safe, dependency-injected test fixtures without mutating global state.
+ */
+export interface PaystackVerificationAdapter {
+  hasSecretKey(): boolean;
+  verifyTransaction(reference: string): Promise<PaystackVerificationOutcome>;
+}
+
+/**
  * Generates a cryptographically unpredictable reference compatible with Paystack format.
  * Paystack permits alphanumeric characters, hyphens, periods, and equals signs: ^[a-zA-Z0-9.\-=]+$
  * Format: ref-<timestamp36>-<16-char-entropy> (contains strictly alphanumeric and hyphens; zero underscores)
@@ -76,7 +85,7 @@ export function isValidPaystackReference(reference: string): boolean {
  * Paystack API Client & Verification Adapter
  * Server-only module; guarantees PAYSTACK_SECRET_KEY never leaves server environment.
  */
-export class PaystackClient {
+export class PaystackClient implements PaystackVerificationAdapter {
   private readonly secretKey: string;
   private readonly customFetch?: typeof fetch;
 

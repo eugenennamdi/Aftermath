@@ -52,6 +52,7 @@ export function IncidentDetailModal({
 
     fetch(`/api/incidents/${incidentId}`)
       .then(async (res) => {
+        if (res.status === 401) throw new Error('Operator authentication required to view incident dossier. Please unlock via Operator Login.');
         if (!res.ok) throw new Error(`Incident ${incidentId} not found`);
         return res.json();
       })
@@ -400,34 +401,96 @@ export function IncidentDetailModal({
                     <tbody className="divide-y divide-zinc-800/60 font-mono">
                       <tr>
                         <td className="p-3 px-4 text-zinc-300">Amount (Minor Units)</td>
-                        <td className="p-3 px-4 text-zinc-200">{data.order.expectedAmount} kobo</td>
-                        <td className="p-3 px-4 text-zinc-200">{data.order.expectedAmount} kobo</td>
-                        <td className="p-3 px-4 text-right text-emerald-400 font-semibold">MATCH</td>
+                        <td className="p-3 px-4 text-zinc-200">{data.evidenceDossier.amountExpected.toLocaleString()} kobo</td>
+                        <td className="p-3 px-4 text-zinc-200">
+                          {data.evidenceDossier.amountVerified !== null
+                            ? `${data.evidenceDossier.amountVerified.toLocaleString()} kobo`
+                            : 'Pending / Unverified'}
+                        </td>
+                        <td className="p-3 px-4 text-right">
+                          <span
+                            className={`inline-block px-2 py-0.5 rounded text-[10px] font-semibold ${
+                              data.evidenceDossier.amountMatched === 'VERIFIED'
+                                ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20'
+                                : data.evidenceDossier.amountMatched === 'MISMATCH'
+                                ? 'text-rose-400 bg-rose-500/10 border border-rose-500/20'
+                                : 'text-zinc-400 bg-zinc-800 border border-zinc-700'
+                            }`}
+                          >
+                            {data.evidenceDossier.amountMatched === 'VERIFIED'
+                              ? 'MATCH'
+                              : data.evidenceDossier.amountMatched}
+                          </span>
+                        </td>
                       </tr>
                       <tr>
                         <td className="p-3 px-4 text-zinc-300">Currency Code</td>
-                        <td className="p-3 px-4 text-zinc-200">{data.order.currency}</td>
-                        <td className="p-3 px-4 text-zinc-200">{data.order.currency}</td>
-                        <td className="p-3 px-4 text-right text-emerald-400 font-semibold">MATCH</td>
+                        <td className="p-3 px-4 text-zinc-200">{data.evidenceDossier.currencyExpected}</td>
+                        <td className="p-3 px-4 text-zinc-200">
+                          {data.evidenceDossier.currencyVerified || 'Pending / Unverified'}
+                        </td>
+                        <td className="p-3 px-4 text-right">
+                          <span
+                            className={`inline-block px-2 py-0.5 rounded text-[10px] font-semibold ${
+                              data.evidenceDossier.currencyMatched === 'VERIFIED'
+                                ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20'
+                                : data.evidenceDossier.currencyMatched === 'MISMATCH'
+                                ? 'text-rose-400 bg-rose-500/10 border border-rose-500/20'
+                                : 'text-zinc-400 bg-zinc-800 border border-zinc-700'
+                            }`}
+                          >
+                            {data.evidenceDossier.currencyMatched === 'VERIFIED'
+                              ? 'MATCH'
+                              : data.evidenceDossier.currencyMatched}
+                          </span>
+                        </td>
                       </tr>
                       <tr>
                         <td className="p-3 px-4 text-zinc-300">Customer Identity</td>
-                        <td className="p-3 px-4 text-zinc-200">{data.customer.emailRedacted}</td>
-                        <td className="p-3 px-4 text-zinc-200">{data.customer.emailRedacted}</td>
-                        <td className="p-3 px-4 text-right text-emerald-400 font-semibold">MATCH</td>
+                        <td className="p-3 px-4 text-zinc-200">{data.evidenceDossier.customerExpected}</td>
+                        <td className="p-3 px-4 text-zinc-200">
+                          {data.evidenceDossier.customerVerified || 'Pending / Unverified'}
+                        </td>
+                        <td className="p-3 px-4 text-right">
+                          <span
+                            className={`inline-block px-2 py-0.5 rounded text-[10px] font-semibold ${
+                              data.evidenceDossier.customerMatched === 'VERIFIED'
+                                ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20'
+                                : data.evidenceDossier.customerMatched === 'MISMATCH'
+                                ? 'text-rose-400 bg-rose-500/10 border border-rose-500/20'
+                                : 'text-zinc-400 bg-zinc-800 border border-zinc-700'
+                            }`}
+                          >
+                            {data.evidenceDossier.customerMatched === 'VERIFIED'
+                              ? 'MATCH'
+                              : data.evidenceDossier.customerMatched}
+                          </span>
+                        </td>
                       </tr>
                       <tr>
                         <td className="p-3 px-4 text-zinc-300">Transaction Reference</td>
                         <td className="p-3 px-4 text-zinc-200 truncate max-w-[140px]">{data.order.paymentReference}</td>
                         <td className="p-3 px-4 text-zinc-200 truncate max-w-[140px]">{data.incident.paymentReference}</td>
-                        <td className="p-3 px-4 text-right text-emerald-400 font-semibold">BOUND</td>
+                        <td className="p-3 px-4 text-right">
+                          <span className="inline-block px-2 py-0.5 rounded text-[10px] font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20">
+                            BOUND
+                          </span>
+                        </td>
                       </tr>
                       <tr>
                         <td className="p-3 px-4 text-zinc-300">Active Entitlement</td>
                         <td className="p-3 px-4 text-zinc-200">{data.plan.name}</td>
                         <td className="p-3 px-4 text-zinc-200">{data.entitlement?.id || 'Missing initially'}</td>
-                        <td className="p-3 px-4 text-right text-emerald-400 font-semibold">
-                          {data.entitlement?.isActive ? 'CONFIRMED' : 'PROVISIONED'}
+                        <td className="p-3 px-4 text-right">
+                          <span
+                            className={`inline-block px-2 py-0.5 rounded text-[10px] font-semibold ${
+                              data.entitlement?.isActive
+                                ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20'
+                                : 'text-amber-400 bg-amber-500/10 border border-amber-500/20'
+                            }`}
+                          >
+                            {data.entitlement?.isActive ? 'CONFIRMED' : 'PROVISIONED'}
+                          </span>
                         </td>
                       </tr>
                     </tbody>
@@ -444,14 +507,16 @@ export function IncidentDetailModal({
                       </span>
                     </div>
                     <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-900 text-zinc-400 border border-zinc-800">
-                      LIVE_SONNET_SIMULATED_PAYSTACK
+                      {data.evidenceDossier.paymentVerificationState}
                     </span>
                   </div>
 
                   <div className="space-y-1 font-mono text-xs">
                     <div className="flex items-center justify-between text-zinc-400">
                       <span>Trace ID:</span>
-                      <span className="text-zinc-200 font-semibold">{data.neatlogsTrace.traceId}</span>
+                      <span className="text-zinc-200 font-semibold">
+                        {data.neatlogsTrace.traceId || 'None recorded (local/simulated)'}
+                      </span>
                     </div>
                     <div className="flex items-center justify-between text-zinc-400">
                       <span>Workflow:</span>
@@ -459,7 +524,7 @@ export function IncidentDetailModal({
                     </div>
                   </div>
 
-                  {data.neatlogsTrace.traceUrl && (
+                  {data.neatlogsTrace.traceUrl ? (
                     <div className="pt-2 border-t border-zinc-800/60 flex items-center justify-end">
                       <a
                         href={data.neatlogsTrace.traceUrl}
@@ -470,6 +535,11 @@ export function IncidentDetailModal({
                         <span>Inspect in neatlogs Dashboard</span>
                         <ExternalLinkIcon size={12} />
                       </a>
+                    </div>
+                  ) : (
+                    <div className="pt-2 border-t border-zinc-800/60 flex items-center justify-between text-[11px] text-zinc-500 font-mono">
+                      <span>Remote trace:</span>
+                      <span>No remote ingest link captured</span>
                     </div>
                   )}
                 </div>

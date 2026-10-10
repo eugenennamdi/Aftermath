@@ -278,4 +278,41 @@ describe('Autonomous AI Agent Model Decisions & Tool Calling (CTO Requirement 1 
       }
     }
   });
+
+  it('Flow G: LiteLLM provider failure NEVER silently falls back to Gemini (Zero Personally Funded Spend Invariant)', async () => {
+    const prevLiteLLMKey = process.env.LITELLM_API_KEY;
+    const prevGeminiKey = process.env.GEMINI_API_KEY;
+    const prevProvider = process.env.INVESTIGATOR_PROVIDER;
+
+    process.env.LITELLM_API_KEY = 'mock_litellm_failing_key';
+    process.env.GEMINI_API_KEY = 'mock_personal_gemini_key_must_not_be_used';
+    delete process.env.INVESTIGATOR_PROVIDER; // defaults to LiteLLM Sonnet
+
+    // Mock an error in the transport
+    const failingMockTransport: LLMMockTransport = async () => {
+      throw new Error('LiteLLM rate limit / 429 quota exhausted');
+    };
+
+    try {
+      const result = await investigateIncident(incidentId, orderId, reference, {
+        mockTransport: failingMockTransport,
+      });
+
+      // Must defer safely with RETRY_LATER under litellm_sonnet
+      expect(result.decision).toBe('RETRY_LATER');
+      expect(result.provider).toBe('litellm_sonnet');
+      // Proves that provider was NOT switched to google_gemini
+      expect(result.provider).not.toBe('google_gemini');
+      expect(result.summary).toContain('Investigation deferred');
+    } finally {
+      if (prevLiteLLMKey) process.env.LITELLM_API_KEY = prevLiteLLMKey;
+      else delete process.env.LITELLM_API_KEY;
+
+      if (prevGeminiKey) process.env.GEMINI_API_KEY = prevGeminiKey;
+      else delete process.env.GEMINI_API_KEY;
+
+      if (prevProvider) process.env.INVESTIGATOR_PROVIDER = prevProvider;
+      else delete process.env.INVESTIGATOR_PROVIDER;
+    }
+  });
 });

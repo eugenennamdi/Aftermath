@@ -50,7 +50,7 @@ export function OperationsOverviewView({
     openIncidents: 0,
     activeEntitlements: 0,
     totalOrders: 0,
-    resolutionRate: 100,
+    resolutionRate: null,
   };
 
   const fleet = overview?.workerFleet ?? {
@@ -111,7 +111,11 @@ export function OperationsOverviewView({
         <MetricCard
           label="Resolved Recoveries"
           value={metrics.resolvedIncidents}
-          subvalue={`${metrics.resolutionRate}% resolution efficiency`}
+          subvalue={
+            metrics.resolutionRate !== null
+              ? `${metrics.resolutionRate}% resolution efficiency`
+              : 'No incidents recorded'
+          }
           icon={<ShieldCheckIcon size={16} />}
           badge={<StatusBadge status="RESOLVED" />}
         />

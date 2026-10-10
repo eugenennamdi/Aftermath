@@ -8,6 +8,7 @@ import {
   inspectEntitlement,
   inspectPriorRecoveryAttempts,
 } from './tools';
+import { type PaystackVerificationAdapter } from '../lib/paystack';
 
 export type AgentDecision = 'PROPOSE_RECOVERY' | 'RECONCILE_EXISTING' | 'RETRY_LATER' | 'ESCALATE';
 
@@ -50,6 +51,8 @@ export interface InvestigationOptions {
   mockTransport?: LLMMockTransport;
   maxTurns?: number;
   timeoutMs?: number;
+  executionMode?: string;
+  paystackAdapter?: PaystackVerificationAdapter;
 }
 
 /**
@@ -277,6 +280,14 @@ export async function investigateIncident(
   );
 }
 
+function sanitizeProviderError(err: unknown): string {
+  if (!err) return 'Unknown provider error';
+  const raw = (err as Error).message || String(err);
+  return raw
+    .replace(/(?:Bearer\s+|key[=:\s]+|sk-)[a-zA-Z0-9_\-\.]{8,}/gi, '[REDACTED_SECRET]')
+    .slice(0, 300);
+}
+
 /**
  * Primary Investigator: Claude Sonnet 4.6 via neatHack LiteLLM Gateway
  */
@@ -291,18 +302,21 @@ async function executeLiteLLMSonnetInvestigation(
   const baseURL = process.env.LITELLM_BASE_URL || 'https://litellm.vision.aivar.app/v1';
   const apiKey = process.env.LITELLM_API_KEY;
   const maxTurns = options?.maxTurns ?? 5;
+  const executionMode = options?.executionMode || 'AUTONOMOUS_SWEEPER';
   const toolSequence: string[] = [];
   const gatheredEvidence: Record<string, unknown> = {};
 
   agentSpan?.setAttribute('aftermath.agent.model', modelName);
   agentSpan?.setAttribute('aftermath.agent.provider', 'litellm_sonnet');
   agentSpan?.setAttribute('aftermath.agent.gateway', baseURL);
+  agentSpan?.setAttribute('aftermath.agent.execution_mode', executionMode);
 
   log('Starting autonomous investigation for incident {incidentId} using {modelName} via LiteLLM', {
     incidentId,
     orderId,
     modelName,
     baseURL,
+    executionMode,
   });
 
   // Check if API key or mock transport is available
@@ -325,11 +339,16 @@ async function executeLiteLLMSonnetInvestigation(
     };
   }
 
-  // Initialize OpenAI SDK wrapped in neatlogs
+  // Initialize OpenAI SDK wrapped in neatlogs with bounded retries and request timeout
   let openAIClient: OpenAI | null = null;
   if (apiKey && !options?.mockTransport) {
     try {
-      const rawClient = new OpenAI({ baseURL, apiKey });
+      const rawClient = new OpenAI({
+        baseURL,
+        apiKey,
+        timeout: 30000,
+        maxRetries: 2,
+      });
       openAIClient = wrapOpenAI(rawClient);
     } catch (initErr) {
       console.error('[Investigator] Failed to initialize OpenAI client for LiteLLM:', initErr);
@@ -363,7 +382,11 @@ Rules:
   let turnsExecuted = 0;
   let finalDecision: AgentDecision | null = null;
   let finalSummary = '';
-  let tokensUsed: InvestigationResult['tokensUsed'] = undefined;
+  let tokensUsed: { promptTokens: number; candidatesTokens: number; totalTokens: number } | undefined = undefined;
+  const TOKEN_BUDGET_CEILING = parseInt(process.env.INVESTIGATION_TOKEN_BUDGET || '12000', 10);
+  let accumulatedTokens = 0;
+  let promptTokensAccum = 0;
+  let candidatesTokensAccum = 0;
 
   for (let turn = 1; turn <= maxTurns; turn++) {
     turnsExecuted = turn;
@@ -371,12 +394,12 @@ Rules:
     let functionCalls: Array<{ name: string; args: Record<string, unknown>; id?: string }> | undefined;
     let responseText: string | undefined;
 
-    if (options?.mockTransport) {
-      const mockRes = await options.mockTransport(turn, messages, RECOVERY_TOOL_DECLARATIONS_OPENAI);
-      functionCalls = mockRes.functionCalls;
-      responseText = mockRes.text;
-    } else if (openAIClient) {
-      try {
+    try {
+      if (options?.mockTransport) {
+        const mockRes = await options.mockTransport(turn, messages, RECOVERY_TOOL_DECLARATIONS_OPENAI);
+        functionCalls = mockRes.functionCalls;
+        responseText = mockRes.text;
+      } else if (openAIClient) {
         const response = await openAIClient.chat.completions.create({
           model: modelName,
           messages,
@@ -390,11 +413,26 @@ Rules:
         responseText = message?.content || undefined;
 
         if (response.usage) {
+          const turnTokens = response.usage.total_tokens || 0;
+          accumulatedTokens += turnTokens;
+          promptTokensAccum += response.usage.prompt_tokens || 0;
+          candidatesTokensAccum += response.usage.completion_tokens || 0;
           tokensUsed = {
-            promptTokens: response.usage.prompt_tokens,
-            candidatesTokens: response.usage.completion_tokens,
-            totalTokens: response.usage.total_tokens,
+            promptTokens: promptTokensAccum,
+            candidatesTokens: candidatesTokensAccum,
+            totalTokens: accumulatedTokens,
           };
+
+          if (accumulatedTokens >= TOKEN_BUDGET_CEILING) {
+            log('Investigation reached token budget ceiling ({accumulatedTokens} >= {TOKEN_BUDGET_CEILING}) for incident {incidentId}', {
+              incidentId,
+              accumulatedTokens,
+              TOKEN_BUDGET_CEILING,
+            });
+            finalDecision = 'RETRY_LATER';
+            finalSummary = `Investigation deferred: Token budget ceiling (${accumulatedTokens} tokens) reached.`;
+            break;
+          }
         }
 
         if (message?.tool_calls && message.tool_calls.length > 0) {
@@ -418,15 +456,16 @@ Rules:
         } else if (responseText) {
           messages.push({ role: 'assistant', content: responseText });
         }
-      } catch (modelErr) {
-        log('LiteLLM Sonnet model generation error on turn {turn}: {error}', {
-          turn,
-          error: (modelErr as Error).message,
-        });
-        finalDecision = 'RETRY_LATER';
-        finalSummary = `LiteLLM Sonnet error during investigation: ${(modelErr as Error).message}`;
-        break;
       }
+    } catch (modelErr) {
+      const safeError = sanitizeProviderError(modelErr);
+      log('LiteLLM Sonnet model generation error on turn {turn}: {error}', {
+        turn,
+        error: safeError,
+      });
+      finalDecision = 'RETRY_LATER';
+      finalSummary = `Investigation deferred: LiteLLM Sonnet error during investigation: ${safeError}`;
+      break;
     }
 
     // Check if model concluded without tool calls
@@ -511,7 +550,7 @@ Rules:
           break;
 
         case 'verify_paystack_transaction':
-          toolResult = await verifyPaystackTransaction(paymentReference);
+          toolResult = await verifyPaystackTransaction(paymentReference, options?.paystackAdapter);
           gatheredEvidence.paystack = toolResult;
           break;
 
@@ -809,7 +848,7 @@ Rules:
           break;
 
         case 'verify_paystack_transaction':
-          toolResult = await verifyPaystackTransaction(paymentReference);
+          toolResult = await verifyPaystackTransaction(paymentReference, options?.paystackAdapter);
           gatheredEvidence.paystack = toolResult;
           break;
 

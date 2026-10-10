@@ -1,19 +1,90 @@
 import crypto from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 
-const OPERATOR_COOKIE_NAME = 'aftermath_operator_session';
-const SESSION_TTL_SECONDS = 60 * 60 * 24; // 24 hours
+export const OPERATOR_COOKIE_NAME = 'aftermath_operator_session';
+export const SESSION_TTL_SECONDS = 60 * 60 * 24; // 24 hours
+export const MIN_OPERATOR_SECRET_LENGTH = 16;
+export const MAX_OPERATOR_INPUT_LENGTH = 256;
 
-function getOperatorSecret(): string {
-  return process.env.OPERATOR_SECRET || 'aftermath-operator-dev-secret-key-2026';
+// In-memory rate limiting map for login throttling: ip -> { attempts, resetAt }
+const loginAttemptMap = new Map<string, { attempts: number; resetAt: number }>();
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOGIN_RATE_WINDOW_MS = 60 * 1000; // 60 seconds
+
+/**
+ * Returns the operator secret from environment or null if missing/inadequate.
+ * Strictly FAILS CLOSED: no default dev secret is allowed in source control.
+ */
+export function getOperatorSecret(): string | null {
+  const secret = process.env.OPERATOR_SECRET;
+  if (!secret || typeof secret !== 'string') {
+    return null;
+  }
+  const trimmed = secret.trim();
+  if (trimmed.length < MIN_OPERATOR_SECRET_LENGTH) {
+    return null;
+  }
+  return trimmed;
+}
+
+/**
+ * Checks in-memory rate limiting for login attempts per IP.
+ */
+export function checkLoginRateLimit(clientIp: string): { allowed: boolean; retryAfterSeconds?: number } {
+  const now = Date.now();
+  const record = loginAttemptMap.get(clientIp);
+
+  if (!record || now > record.resetAt) {
+    return { allowed: true };
+  }
+
+  if (record.attempts >= MAX_LOGIN_ATTEMPTS) {
+    const retryAfter = Math.ceil((record.resetAt - now) / 1000);
+    return { allowed: false, retryAfterSeconds: Math.max(retryAfter, 1) };
+  }
+
+  return { allowed: true };
+}
+
+/**
+ * Records a successful or failed login attempt to throttle brute force.
+ */
+export function recordLoginAttempt(clientIp: string, success: boolean): void {
+  const now = Date.now();
+  if (success) {
+    loginAttemptMap.delete(clientIp);
+    return;
+  }
+
+  const record = loginAttemptMap.get(clientIp);
+  if (!record || now > record.resetAt) {
+    loginAttemptMap.set(clientIp, { attempts: 1, resetAt: now + LOGIN_RATE_WINDOW_MS });
+  } else {
+    record.attempts += 1;
+  }
+}
+
+/**
+ * Resets the in-memory login attempts table (used in testing).
+ */
+export function resetLoginRateLimits(): void {
+  loginAttemptMap.clear();
 }
 
 /**
  * Validates the operator password using constant-time comparison to prevent timing attacks.
+ * Fails closed if OPERATOR_SECRET is missing or inadequate.
  */
 export function verifyOperatorPassword(password: string): boolean {
   if (!password || typeof password !== 'string') return false;
+  if (password.length > MAX_OPERATOR_INPUT_LENGTH) return false;
+
   const expectedSecret = getOperatorSecret();
+  if (!expectedSecret) {
+    // FAIL CLOSED: No valid secret configured
+    return false;
+  }
+
   const inputBuffer = Buffer.from(password);
   const expectedBuffer = Buffer.from(expectedSecret);
 
@@ -31,6 +102,10 @@ export function verifyOperatorPassword(password: string): boolean {
  */
 export function createOperatorSessionToken(): string {
   const secret = getOperatorSecret();
+  if (!secret) {
+    throw new Error('OPERATOR_SECRET is missing or shorter than 16 characters. Refusing to mint session token.');
+  }
+
   const exp = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
   const nonce = crypto.randomUUID();
   const payload = Buffer.from(JSON.stringify({ exp, nonce })).toString('base64url');
@@ -43,14 +118,19 @@ export function createOperatorSessionToken(): string {
 
 /**
  * Validates the signature and expiration of an operator session token.
+ * Fails closed if OPERATOR_SECRET is missing or token is invalid.
  */
 export function verifyOperatorSessionToken(token: string | null | undefined): boolean {
   if (!token || typeof token !== 'string') return false;
   const parts = token.split('.');
   if (parts.length !== 2) return false;
 
-  const [payloadB64, signature] = parts;
   const secret = getOperatorSecret();
+  if (!secret) {
+    return false; // Fail closed
+  }
+
+  const [payloadB64, signature] = parts;
   const expectedSignature = crypto
     .createHmac('sha256', secret)
     .update(payloadB64)
@@ -112,18 +192,46 @@ export function clearOperatorCookie(res: NextResponse): void {
 
 /**
  * Validates request origin for state-mutating requests to prevent CSRF.
+ * Compares incoming Origin header against Host or configured trusted application URL.
  */
 export function validateCsrfOrOrigin(req: NextRequest): boolean {
-  // If not a mutating method, safe
+  // Safe HTTP read methods
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return true;
 
   const origin = req.headers.get('origin');
   const host = req.headers.get('host');
-  if (!origin || !host) return true; // Direct non-browser calls / test runners
+  const trustedAppUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL;
+
+  // If no origin header is provided, inspect Sec-Fetch-Site
+  if (!origin) {
+    const secFetchSite = req.headers.get('sec-fetch-site');
+    if (secFetchSite && (secFetchSite === 'cross-site')) {
+      return false;
+    }
+    // Allow non-browser server-to-server or test requests if host header is present
+    return Boolean(host);
+  }
 
   try {
-    const originHost = new URL(origin).host;
-    return originHost === host;
+    const originUrl = new URL(origin);
+
+    // Host matching (ignoring port differences in local environments)
+    if (host) {
+      const hostOnly = host.split(':')[0];
+      if (originUrl.host === host || originUrl.hostname === hostOnly) {
+        return true;
+      }
+    }
+
+    // Configured trusted app URL matching
+    if (trustedAppUrl) {
+      const appUrl = new URL(trustedAppUrl);
+      if (originUrl.host === appUrl.host || originUrl.hostname === appUrl.hostname) {
+        return true;
+      }
+    }
+
+    return false;
   } catch {
     return false;
   }

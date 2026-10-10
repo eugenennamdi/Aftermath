@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createTrustedOrder } from '@/services/order';
+import { validateCsrfOrOrigin } from '@/lib/auth';
 
 // Explicit allowlist of plans permitted for checkout initialization in demo/test mode
 const AUTHORIZED_DEMO_PLANS = new Set([
@@ -9,14 +10,18 @@ const AUTHORIZED_DEMO_PLANS = new Set([
 ]);
 
 const CheckoutRequestSchema = z.object({
-  planId: z.string().min(1),
-  customerEmail: z.string().email(),
-  customerName: z.string().optional(),
-  callbackUrl: z.string().optional(),
+  planId: z.string().min(1).max(64),
+  customerEmail: z.string().email().max(128),
+  customerName: z.string().max(128).optional(),
+  callbackUrl: z.string().max(256).optional(),
 });
 
 export async function POST(req: NextRequest) {
   try {
+    if (!validateCsrfOrOrigin(req)) {
+      return NextResponse.json({ error: 'Untrusted origin' }, { status: 403 });
+    }
+
     const body: unknown = await req.json();
     const parsed = CheckoutRequestSchema.safeParse(body);
 

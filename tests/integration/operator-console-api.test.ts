@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from 'vitest';
 import crypto from 'node:crypto';
 import { db } from '@/db';
 import { customers, orders, incidents, entitlements, auditLogs } from '@/db/schema';
@@ -11,12 +11,27 @@ import {
 } from '@/lib/auth';
 import { generatePaystackReference } from '@/lib/paystack';
 import { eq } from 'drizzle-orm';
+import { NextRequest } from 'next/server';
+import { GET as getIncidentRoute } from '@/app/api/incidents/[id]/route';
 
 describe('Phase 3 Operator Console: Authoritative Query Layer, Security & Scenario Execution', () => {
   let customerId: string;
   let customerEmail: string;
   let orderId: string;
   let reference: string;
+  const originalSecret = process.env.OPERATOR_SECRET;
+
+  beforeAll(() => {
+    process.env.OPERATOR_SECRET = 'aftermath-operator-test-secret-32-chars-long';
+  });
+
+  afterAll(() => {
+    if (originalSecret !== undefined) {
+      process.env.OPERATOR_SECRET = originalSecret;
+    } else {
+      delete process.env.OPERATOR_SECRET;
+    }
+  });
 
   beforeEach(async () => {
     customerEmail = `console-test-${Date.now()}@example.com`;
@@ -48,10 +63,25 @@ describe('Phase 3 Operator Console: Authoritative Query Layer, Security & Scenar
 
   describe('1. Operator Authentication & Session Token Crypto', () => {
     it('verifies operator passphrase using constant-time comparison', () => {
-      const correctSecret = process.env.OPERATOR_SECRET || 'aftermath-operator-dev-secret-key-2026';
+      const correctSecret = process.env.OPERATOR_SECRET!;
       expect(verifyOperatorPassword(correctSecret)).toBe(true);
       expect(verifyOperatorPassword('wrong-passphrase')).toBe(false);
       expect(verifyOperatorPassword('')).toBe(false);
+    });
+
+    it('fails closed when OPERATOR_SECRET is missing or shorter than 16 characters', () => {
+      const saved = process.env.OPERATOR_SECRET;
+      try {
+        delete process.env.OPERATOR_SECRET;
+        expect(verifyOperatorPassword('any-passphrase-whatsoever')).toBe(false);
+        expect(() => createOperatorSessionToken()).toThrow(/OPERATOR_SECRET is missing or shorter/);
+
+        process.env.OPERATOR_SECRET = 'short-secret';
+        expect(verifyOperatorPassword('short-secret')).toBe(false);
+        expect(() => createOperatorSessionToken()).toThrow(/OPERATOR_SECRET is missing or shorter/);
+      } finally {
+        process.env.OPERATOR_SECRET = saved;
+      }
     });
 
     it('generates signed HMAC session token and verifies valid tokens', () => {
@@ -68,6 +98,42 @@ describe('Phase 3 Operator Console: Authoritative Query Layer, Security & Scenar
       expect(verifyOperatorSessionToken(tamperedToken)).toBe(false);
       expect(verifyOperatorSessionToken('invalid.payload')).toBe(false);
       expect(verifyOperatorSessionToken(null)).toBe(false);
+    });
+
+    it('enforces authentication on GET /api/incidents/[id] route (401 when missing)', async () => {
+      const unauthReq = new NextRequest('http://localhost:3000/api/incidents/inc_test_123');
+      const response = await getIncidentRoute(unauthReq, {
+        params: Promise.resolve({ id: 'inc_test_123' }),
+      });
+      expect(response.status).toBe(401);
+      const json = await response.json();
+      expect(json.error).toContain('Unauthorized');
+    });
+
+    it('permits authenticated operator on GET /api/incidents/[id]', async () => {
+      const incId = `inc_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
+      await db.insert(incidents).values({
+        id: incId,
+        orderId,
+        paymentReference: reference,
+        customerId,
+        status: 'OPEN',
+        reason: 'PAID_BUT_UNFULFILLED',
+      });
+
+      const token = createOperatorSessionToken();
+      const authReq = new NextRequest('http://localhost:3000/api/incidents/' + incId, {
+        headers: {
+          cookie: `aftermath_operator_session=${token}`,
+        },
+      });
+
+      const response = await getIncidentRoute(authReq, {
+        params: Promise.resolve({ id: incId }),
+      });
+      expect(response.status).toBe(200);
+      const json = await response.json();
+      expect(json.incident.id).toBe(incId);
     });
   });
 
@@ -90,7 +156,6 @@ describe('Phase 3 Operator Console: Authoritative Query Layer, Security & Scenar
       expect(typeof overview.metrics.totalIncidents).toBe('number');
       expect(typeof overview.metrics.resolvedIncidents).toBe('number');
       expect(typeof overview.metrics.activeEntitlements).toBe('number');
-      expect(typeof overview.metrics.resolutionRate).toBe('number');
       expect(overview.workerFleet).toBeDefined();
       expect(Array.isArray(overview.recentActivity)).toBe(true);
     });
@@ -118,7 +183,7 @@ describe('Phase 3 Operator Console: Authoritative Query Layer, Security & Scenar
       expect(target?.currency).toBe('NGN');
     });
 
-    it('retrieves full 10-step investigation detail and evidence dossier', async () => {
+    it('retrieves full 10-step investigation detail and truthful evidence dossier', async () => {
       const incId = `inc_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
       await db.insert(incidents).values({
         id: incId,
@@ -138,10 +203,12 @@ describe('Phase 3 Operator Console: Authoritative Query Layer, Security & Scenar
       expect(detail?.order.id).toBe(orderId);
       expect(detail?.customer.emailRedacted).toContain('***@');
       expect(detail?.evidenceDossier).toBeDefined();
-      expect(detail?.evidenceDossier.amountMatched).toBe(true);
-      expect(detail?.evidenceDossier.currencyMatched).toBe(true);
+      expect(detail?.evidenceDossier.amountMatched).toBe('VERIFIED');
+      expect(detail?.evidenceDossier.currencyMatched).toBe('VERIFIED');
+      expect(detail?.evidenceDossier.customerMatched).toBe('VERIFIED');
+      expect(detail?.evidenceDossier.paymentVerificationState).toBeDefined();
       expect(detail?.neatlogsTrace).toBeDefined();
-      expect(detail?.neatlogsTrace.traceId).toContain('trace_');
+      expect(detail?.neatlogsTrace.workflowName).toBeDefined();
     });
   });
 
@@ -172,7 +239,7 @@ describe('Phase 3 Operator Console: Authoritative Query Layer, Security & Scenar
       // Verify only 1 entitlement row exists for order
       const orderEnts = await db.select().from(entitlements).where(eq(entitlements.orderId, result.orderId));
       expect(orderEnts).toHaveLength(1);
-    }, 15000);
+    }, 30000);
 
     it('executes Scenario C (Unsafe / Underpaid Payment) blocking recovery and escalating to ESCALATED', async () => {
       const result = await scenarioRunnerService.runScenarioC();

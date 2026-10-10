@@ -5,7 +5,7 @@ import { incidents, orders, auditLogs } from '../db/schema';
 import { investigateIncident } from '../agent/investigator';
 import { recoveryService } from '../services/recovery';
 import { getPaidUnfulfilledOrders, getPendingOrdersForReconciliation, createOrGetIncident } from '../services/incident';
-import { paystackClient } from '../lib/paystack';
+import { paystackClient, type PaystackVerificationAdapter } from '../lib/paystack';
 import { initNeatlogs } from '../lib/neatlogs';
 import { trace, flush, log } from 'neatlogs';
 
@@ -24,10 +24,16 @@ export class RecoveryWorker {
   private pollIntervalMs: number;
   private loopTimer: NodeJS.Timeout | null = null;
   private isProcessing: boolean = false;
+  private readonly paystackAdapter?: PaystackVerificationAdapter;
 
-  constructor(options?: { pollIntervalMs?: number; workerId?: string }) {
+  constructor(options?: {
+    pollIntervalMs?: number;
+    workerId?: string;
+    paystackAdapter?: PaystackVerificationAdapter;
+  }) {
     this.workerId = options?.workerId || `worker_${process.pid}_${crypto.randomUUID().slice(0, 8)}`;
     this.pollIntervalMs = options?.pollIntervalMs ?? 1000;
+    this.paystackAdapter = options?.paystackAdapter;
   }
 
   /**
@@ -206,13 +212,38 @@ export class RecoveryWorker {
           }, heartbeatIntervalMs);
         }
 
+        const effectiveAdapter = options?.paystackAdapter || this.paystackAdapter;
+        const effectiveExecutionMode = options?.executionMode || 'PRODUCTION';
+
+        // Record processing start in audit logs with executionMode
+        try {
+          await db.insert(auditLogs).values({
+            id: `aud_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`,
+            incidentId: incident.id,
+            orderId: incident.orderId,
+            action: 'INCIDENT_PROCESSING_STARTED',
+            actor: 'RECOVERY_WORKER',
+            details: JSON.stringify({
+              workerId: this.workerId,
+              fencingToken: incident.fencingToken,
+              executionMode: effectiveExecutionMode,
+            }),
+          });
+        } catch {
+          // Non-blocking audit record
+        }
+
         try {
           // Step 1: Execute Autonomous Investigator Agent with bounded timeout
           const investigationPromise = investigateIncident(
             incident.id,
             incident.orderId,
             incident.paymentReference,
-            options
+            {
+              ...options,
+              paystackAdapter: effectiveAdapter,
+              executionMode: effectiveExecutionMode,
+            }
           );
 
           const timeoutPromise = new Promise<never>((_, reject) => {
@@ -242,7 +273,11 @@ export class RecoveryWorker {
                 incident.id,
                 incident.fencingToken,
                 this.workerId,
-                investigation
+                investigation,
+                {
+                  paystackAdapter: effectiveAdapter,
+                  executionMode: effectiveExecutionMode,
+                }
               );
               executionOutcome = outcome as unknown as Record<string, unknown>;
               break;
@@ -330,7 +365,7 @@ export class RecoveryWorker {
     const stalePending = await getPendingOrdersForReconciliation(5, 20);
     for (const order of stalePending) {
       // Check Paystack verification directly
-      const outcome = await paystackClient.verifyTransaction(order.paymentReference);
+      const outcome = await (this.paystackAdapter || paystackClient).verifyTransaction(order.paymentReference);
       if (outcome.outcome === 'SUCCESS') {
         // Payment was completed on Paystack! Mark order paid and open incident
         await createOrGetIncident({
