@@ -78,8 +78,41 @@ describe('Phase 2 Acceptance Scenario A: Autonomous Discovery, Investigation, Ga
     expect(claimed?.leaseOwner).toBe(worker.workerId);
 
     // 3. Process claimed incident: Agent investigates -> Gate authorizes -> Entitlement provisioned -> Fresh read verifies
-    const result = await worker.processClaimedIncident(claimed!);
+    const mockTransport = async (turn: number) => {
+      if (turn === 1) {
+        return {
+          functionCalls: [
+            { name: 'inspect_order', args: { orderId } },
+            { name: 'verify_paystack_transaction', args: { paymentReference: reference } },
+          ],
+        };
+      }
+      if (turn === 2) {
+        return {
+          functionCalls: [
+            { name: 'inspect_entitlement', args: { orderId } },
+            {
+              name: 'submit_investigation_decision',
+              args: {
+                decision: 'PROPOSE_RECOVERY',
+                summary: 'Paystack verified payment matches trusted order and entitlement is missing',
+              },
+            },
+          ],
+        };
+      }
+      return {};
+    };
+
+    const result = await worker.processClaimedIncident(claimed!, { mockTransport });
     expect(result.decision).toBe('PROPOSE_RECOVERY');
+    expect(result.turnsExecuted).toBe(2);
+    expect(result.toolSequence).toEqual([
+      'inspect_order',
+      'verify_paystack_transaction',
+      'inspect_entitlement',
+      'submit_investigation_decision',
+    ]);
     expect(result.outcome.decision).toBe('RESOLVED');
 
     // 4. Verify Database State Invariants:

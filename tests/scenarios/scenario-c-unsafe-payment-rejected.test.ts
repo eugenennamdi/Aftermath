@@ -67,7 +67,32 @@ describe('Phase 2 Acceptance Scenario C: Deterministic Security Gate Rejection &
     const claimed = await worker.claimNextIncident(incident.id);
     expect(claimed).not.toBeNull();
 
-    const result = await worker.processClaimedIncident(claimed!);
+    const mockTransport1 = async (turn: number) => {
+      if (turn === 1) {
+        return {
+          functionCalls: [
+            { name: 'inspect_order', args: { orderId } },
+            { name: 'verify_paystack_transaction', args: { paymentReference: reference } },
+          ],
+        };
+      }
+      if (turn === 2) {
+        return {
+          functionCalls: [
+            {
+              name: 'submit_investigation_decision',
+              args: {
+                decision: 'ESCALATE',
+                summary: 'Amount mismatch: expected 500000 kobo, received 250000 kobo',
+              },
+            },
+          ],
+        };
+      }
+      return {};
+    };
+
+    const result = await worker.processClaimedIncident(claimed!, { mockTransport: mockTransport1 });
     expect(result.decision).toBe('ESCALATE');
 
     // Incident escalated in DB
@@ -108,7 +133,32 @@ describe('Phase 2 Acceptance Scenario C: Deterministic Security Gate Rejection &
     const claimed = await worker.claimNextIncident(incident.id);
     expect(claimed).not.toBeNull();
 
-    const result = await worker.processClaimedIncident(claimed!);
+    const mockTransport2 = async (turn: number) => {
+      if (turn === 1) {
+        return {
+          functionCalls: [
+            { name: 'inspect_order', args: { orderId } },
+            { name: 'verify_paystack_transaction', args: { paymentReference: reference } },
+          ],
+        };
+      }
+      if (turn === 2) {
+        return {
+          functionCalls: [
+            {
+              name: 'submit_investigation_decision',
+              args: {
+                decision: 'ESCALATE',
+                summary: 'Currency mismatch: expected NGN, received USD',
+              },
+            },
+          ],
+        };
+      }
+      return {};
+    };
+
+    const result = await worker.processClaimedIncident(claimed!, { mockTransport: mockTransport2 });
     expect(result.decision).toBe('ESCALATE');
 
     const [escalatedIncident] = await db
@@ -146,7 +196,32 @@ describe('Phase 2 Acceptance Scenario C: Deterministic Security Gate Rejection &
     const claimed = await worker.claimNextIncident(incident.id);
     expect(claimed).not.toBeNull();
 
-    const result = await worker.processClaimedIncident(claimed!);
+    const mockTransport3 = async (turn: number) => {
+      if (turn === 1) {
+        return {
+          functionCalls: [
+            { name: 'inspect_order', args: { orderId } },
+            { name: 'verify_paystack_transaction', args: { paymentReference: reference } },
+          ],
+        };
+      }
+      if (turn === 2) {
+        return {
+          functionCalls: [
+            {
+              name: 'submit_investigation_decision',
+              args: {
+                decision: 'ESCALATE',
+                summary: 'Email mismatch: expected customer email, received attacker@evil.com',
+              },
+            },
+          ],
+        };
+      }
+      return {};
+    };
+
+    const result = await worker.processClaimedIncident(claimed!, { mockTransport: mockTransport3 });
     expect(result.decision).toBe('ESCALATE');
 
     const [escalatedIncident] = await db

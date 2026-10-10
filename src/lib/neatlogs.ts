@@ -1,4 +1,12 @@
 import { config } from 'dotenv';
+import dns from 'node:dns';
+
+try {
+  dns.setDefaultResultOrder('ipv4first');
+} catch {
+  // Ignore in environments where not supported
+}
+
 // Load environment variables (.env.local has precedence over .env)
 config({ path: '.env.local' });
 config({ path: '.env' });
@@ -57,25 +65,21 @@ export async function initNeatlogs() {
 }
 
 /**
- * Minimal Isolated Test Workflow (Phase 0 Verification)
- * Demonstrates:
- * 1. Root workflow span
- * 2. Nested agent reasoning span
- * 3. Nested tool execution span with sanitized I/O
- * 4. Nested guardrail validation span
- * 5. Correlated incident ID
- * 6. Explicit flush
+ * Isolated SDK Demonstration Workflow (Phase 0 Foundation Check)
+ * Clearly labeled as an offline/unit SDK demonstration with simulated tool results.
+ * Distinct from the real model-driven Aftermath recovery workflow.
  */
 export async function runIsolatedTestWorkflow(incidentId: string = 'test_inc_001') {
   await initNeatlogs();
 
   return await trace(
     {
-      name: 'aftermath_recovery_workflow',
+      name: 'isolated_demo_workflow',
       kind: 'WORKFLOW',
-      tags: ['phase_0_verification', 'test'],
+      tags: ['isolated_sdk_demonstration', 'offline_fixture', 'test'],
     },
     async (workflowSpan) => {
+      workflowSpan?.setAttribute('aftermath.execution_mode', 'ISOLATED_SDK_DEMO');
       const spanCtx = workflowSpan?.spanContext();
       const traceId = spanCtx?.traceId;
       const rootSpanId = spanCtx?.spanId;

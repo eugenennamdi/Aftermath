@@ -66,7 +66,31 @@ describe('Phase 2 Acceptance Scenario B: Transient Failure Backoff & Ambiguous P
     const claimed = await worker.claimNextIncident(incident.id);
     expect(claimed).not.toBeNull();
 
-    const result = await worker.processClaimedIncident(claimed!);
+    const mockTransport1 = async (turn: number) => {
+      if (turn === 1) {
+        return {
+          functionCalls: [
+            { name: 'verify_paystack_transaction', args: { paymentReference: reference } },
+          ],
+        };
+      }
+      if (turn === 2) {
+        return {
+          functionCalls: [
+            {
+              name: 'submit_investigation_decision',
+              args: {
+                decision: 'RETRY_LATER',
+                summary: 'Paystack returned transient 503 error; backoff scheduled',
+              },
+            },
+          ],
+        };
+      }
+      return {};
+    };
+
+    const result = await worker.processClaimedIncident(claimed!, { mockTransport: mockTransport1 });
     expect(result.decision).toBe('RETRY_LATER');
 
     // Verify Incident State after retry scheduled:
@@ -126,8 +150,30 @@ describe('Phase 2 Acceptance Scenario B: Transient Failure Backoff & Ambiguous P
     const claimed = await worker.claimNextIncident(incident.id);
     expect(claimed).not.toBeNull();
 
+    const mockTransport2 = async (turn: number) => {
+      if (turn === 1) {
+        return {
+          functionCalls: [{ name: 'inspect_entitlement', args: { orderId } }],
+        };
+      }
+      if (turn === 2) {
+        return {
+          functionCalls: [
+            {
+              name: 'submit_investigation_decision',
+              args: {
+                decision: 'RECONCILE_EXISTING',
+                summary: 'Active entitlement already found in database; reconcile incident without duplicate grant',
+              },
+            },
+          ],
+        };
+      }
+      return {};
+    };
+
     // Agent should inspect existing entitlement and propose RECONCILE_EXISTING
-    const result = await worker.processClaimedIncident(claimed!);
+    const result = await worker.processClaimedIncident(claimed!, { mockTransport: mockTransport2 });
     expect(result.decision).toBe('RECONCILE_EXISTING');
     expect(result.outcome.decision).toBe('RESOLVED');
 

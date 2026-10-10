@@ -98,11 +98,37 @@ describe('Phase 2 Acceptance Scenario D: Duplicate Events & Concurrent Worker Fe
     expect(claimedByWorker1?.fencingToken).toBe(1);
     expect(claimedByWorker1?.leaseOwner).toBe(worker1.workerId);
 
+    const mockTransport = async (turn: number) => {
+      if (turn === 1) {
+        return {
+          functionCalls: [
+            { name: 'inspect_order', args: { orderId } },
+            { name: 'verify_paystack_transaction', args: { paymentReference: reference } },
+          ],
+        };
+      }
+      if (turn === 2) {
+        return {
+          functionCalls: [
+            {
+              name: 'submit_investigation_decision',
+              args: {
+                decision: 'PROPOSE_RECOVERY',
+                summary: 'Verified Paystack payment matches trusted order',
+              },
+            },
+          ],
+        };
+      }
+      return {};
+    };
+
     // Worker 1 runs investigation, assembling evidence
     const investigation1 = await investigateIncident(
       claimedByWorker1!.id,
       claimedByWorker1!.orderId,
-      claimedByWorker1!.paymentReference
+      claimedByWorker1!.paymentReference,
+      { mockTransport }
     );
 
     // 2. Simulate Worker 1 stalling or experiencing network pause.
@@ -135,7 +161,8 @@ describe('Phase 2 Acceptance Scenario D: Duplicate Events & Concurrent Worker Fe
     const investigation2 = await investigateIncident(
       claimedByWorker2!.id,
       claimedByWorker2!.orderId,
-      claimedByWorker2!.paymentReference
+      claimedByWorker2!.paymentReference,
+      { mockTransport }
     );
 
     const outcome2 = await recoveryService.authorizeAndExecuteRecovery(

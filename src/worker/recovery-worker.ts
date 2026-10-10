@@ -119,11 +119,40 @@ export class RecoveryWorker {
   }
 
   /**
+   * Extends the worker's active lease atomically.
+   * Conditional on current lease ownership, fencing token, and unexpired lease.
+   */
+  public async extendLease(
+    incidentId: string,
+    fencingToken: number,
+    durationSeconds: number = 30
+  ): Promise<boolean> {
+    const updated = await queryClient<Array<{ id: string }>>`
+      UPDATE incidents
+      SET
+        lease_expires_at = now() + (${durationSeconds} * interval '1 second'),
+        updated_at = now()
+      WHERE id = ${incidentId}
+        AND fencing_token = ${fencingToken}
+        AND lease_owner = ${this.workerId}
+        AND lease_expires_at > now()
+      RETURNING id
+    `;
+    return updated.length > 0;
+  }
+
+  /**
    * Processes a single claimed incident through the autonomous recovery pipeline.
    */
-  public async processClaimedIncident(incident: ClaimedIncident): Promise<{
+  public async processClaimedIncident(
+    incident: ClaimedIncident,
+    options?: import('../agent/investigator').InvestigationOptions
+  ): Promise<{
     incidentId: string;
     decision: string;
+    modelUsed: string;
+    turnsExecuted: number;
+    toolSequence: string[];
     outcome: Record<string, unknown>;
   }> {
     await initNeatlogs();
@@ -150,10 +179,13 @@ export class RecoveryWorker {
         const investigation = await investigateIncident(
           incident.id,
           incident.orderId,
-          incident.paymentReference
+          incident.paymentReference,
+          options
         );
 
         workflowSpan?.setAttribute('aftermath.agent.proposed_decision', investigation.decision);
+        workflowSpan?.setAttribute('aftermath.agent.model', investigation.modelUsed);
+        workflowSpan?.setAttribute('aftermath.agent.tool_sequence', JSON.stringify(investigation.toolSequence));
 
         let executionOutcome: Record<string, unknown> = {};
 
@@ -214,6 +246,9 @@ export class RecoveryWorker {
         return {
           incidentId: incident.id,
           decision: investigation.decision,
+          modelUsed: investigation.modelUsed,
+          turnsExecuted: investigation.turnsExecuted,
+          toolSequence: investigation.toolSequence,
           outcome: executionOutcome,
         };
       }
