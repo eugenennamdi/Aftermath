@@ -1,6 +1,8 @@
 import { config } from 'dotenv';
-config({ path: '.env.local' });
-config({ path: '.env' });
+if (process.env.NODE_ENV !== 'production') {
+  config({ path: '.env.local' });
+  config({ path: '.env' });
+}
 
 import { db } from './index';
 import { subscriptionPlans } from './schema';

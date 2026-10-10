@@ -6,11 +6,14 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "node --import tsx scripts/supervisor.ts",
+    "start:web": "next start",
+    "start:worker": "node --import tsx src/worker/index.ts",
     "test": "vitest run",
     "worker": "node --import tsx src/worker/index.ts",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
+    "db:migrate": "node --import tsx src/db/migrate.ts",
+    "db:migrate:kit": "drizzle-kit migrate",
     "db:seed": "node --import tsx src/db/seed.ts",
     "demo:init": "tsx scripts/init-real-checkout.ts",
     "demo:verify": "tsx scripts/verify-real-checkout.ts"

@@ -7,9 +7,11 @@
  */
 
 import { config } from 'dotenv';
-// Load environment variables (.env.local has precedence over .env)
-config({ path: '.env.local' });
-config({ path: '.env' });
+// Load environment variables (.env.local has precedence over .env) in non-production
+if (process.env.NODE_ENV !== 'production') {
+  config({ path: '.env.local' });
+  config({ path: '.env' });
+}
 
 import { recoveryWorker } from './recovery-worker';
 

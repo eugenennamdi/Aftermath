@@ -233,7 +233,7 @@ describe('Phase 3 Operator Console: Authoritative Query Layer, Security & Scenar
             'x-cron-secret': 'valid-cron-secret-at-least-16-chars',
             'content-type': 'application/json',
           },
-          body: JSON.stringify({}),
+          body: JSON.stringify({ incidentId: 'inc_auth_probe_no_claim' }),
         });
         const cronRes = await workerTickRoute(cronReq);
         expect(cronRes.status).toBe(200);
