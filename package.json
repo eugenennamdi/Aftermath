@@ -10,7 +10,9 @@
     "test": "vitest run",
     "worker": "node --import tsx src/worker/index.ts",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate"
+    "db:migrate": "drizzle-kit migrate",
+    "demo:init": "tsx scripts/init-real-checkout.ts",
+    "demo:verify": "tsx scripts/verify-real-checkout.ts"
   },
   "keywords": [],
   "author": "",

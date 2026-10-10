@@ -6,6 +6,7 @@ import { paystackClient, PaystackClient } from '../lib/paystack';
 import { validateOrderPaymentBinding } from './order';
 import { entitlementService, ProvisionOptions } from './entitlement';
 import { createOrGetIncident } from './incident';
+import { redactEmail } from './query';
 
 export type NormalFulfillmentResult =
   | { status: 'FULFILLED'; orderId: string; entitlementId: string }
@@ -169,17 +170,24 @@ export async function processNormalFulfillment(
     .where(eq(orders.id, order.id));
 
   // Authoritatively record independent provider verification
+  const isLiveHttp = client.adapterType === 'LIVE_HTTP' || (client instanceof PaystackClient && !(client as any).__isSimulated);
+  const provenance: 'LIVE_HTTP' | 'SCOPED_FIXTURE' = isLiveHttp ? 'LIVE_HTTP' : 'SCOPED_FIXTURE';
+  const auditAction = isLiveHttp ? 'PAYSTACK_VERIFIED' : 'PAYSTACK_FIXTURE_VERIFIED';
+  const auditActor = isLiveHttp ? 'paystack_adapter' : 'paystack_fixture';
+
   await db.insert(auditLogs).values({
     id: `aud_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`,
     orderId: order.id,
-    action: 'PAYSTACK_VERIFIED',
-    actor: 'paystack_adapter',
+    action: auditAction,
+    actor: auditActor,
     details: JSON.stringify({
+      provenance,
       reference: verification.reference,
       outcome: verification.outcome,
       amount: verification.amount,
       currency: verification.currency,
-      customerEmail: verification.customerEmail,
+      customerEmail: redactEmail(verification.customerEmail),
+      verifiedAt: new Date().toISOString(),
     }),
   });
 

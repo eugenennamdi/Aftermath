@@ -2,7 +2,8 @@ import crypto from 'node:crypto';
 import { eq, desc } from 'drizzle-orm';
 import { db } from '../db';
 import { orders, subscriptionPlans, customers, paymentEvents, entitlements, incidents, auditLogs } from '../db/schema';
-import { paystackClient, type PaystackVerificationOutcome, type PaystackVerificationAdapter } from '../lib/paystack';
+import { paystackClient, PaystackClient, type PaystackVerificationOutcome, type PaystackVerificationAdapter } from '../lib/paystack';
+import { redactEmail } from '../services/query';
 import { sanitizeTelemetryPayload } from '../lib/neatlogs';
 import { trace } from 'neatlogs';
 
@@ -189,12 +190,18 @@ export async function inspectPaymentEvidence(paymentReference: string): Promise<
   );
 }
 
+export interface VerifyPaystackContext {
+  orderId?: string;
+  incidentId?: string;
+}
+
 /**
  * 3. Independently verify transaction against Paystack API.
  */
 export async function verifyPaystackTransaction(
   paymentReference: string,
-  adapter?: PaystackVerificationAdapter
+  adapter?: PaystackVerificationAdapter,
+  context?: VerifyPaystackContext
 ): Promise<VerifyPaystackToolResult> {
   return await trace(
     { name: 'verify_paystack_transaction', kind: 'TOOL' },
@@ -204,6 +211,41 @@ export async function verifyPaystackTransaction(
 
       const client = adapter || paystackClient;
       const outcome: PaystackVerificationOutcome = await client.verifyTransaction(paymentReference);
+
+      // Explicitly distinguish real live HTTP Paystack responses from scoped test fixtures
+      const isLiveHttp = adapter
+        ? adapter.adapterType === 'LIVE_HTTP' || (adapter instanceof PaystackClient && !(adapter as any).__isSimulated)
+        : paystackClient.adapterType === 'LIVE_HTTP';
+      const provenance: 'LIVE_HTTP' | 'SCOPED_FIXTURE' = isLiveHttp ? 'LIVE_HTTP' : 'SCOPED_FIXTURE';
+
+      // Resolve orderId and incidentId for linked evidence provenance
+      let targetOrderId = context?.orderId;
+      let targetIncidentId = context?.incidentId;
+
+      if (!targetOrderId || !targetIncidentId) {
+        try {
+          const [foundOrder] = await db
+            .select({ id: orders.id })
+            .from(orders)
+            .where(eq(orders.paymentReference, paymentReference))
+            .limit(1);
+          if (foundOrder) {
+            targetOrderId = targetOrderId || foundOrder.id;
+            if (!targetIncidentId) {
+              const [foundInc] = await db
+                .select({ id: incidents.id })
+                .from(incidents)
+                .where(eq(incidents.orderId, foundOrder.id))
+                .limit(1);
+              if (foundInc) {
+                targetIncidentId = foundInc.id;
+              }
+            }
+          }
+        } catch {
+          // non-blocking fallback
+        }
+      }
 
       let output: VerifyPaystackToolResult;
       if (outcome.outcome === 'SUCCESS') {
@@ -220,18 +262,25 @@ export async function verifyPaystackTransaction(
           gatewayResponse: outcome.gatewayResponse,
         };
 
-        // Persist independent verification response in audit_logs
+        // Persist independent verification response in audit_logs with explicit order/incident association & provenance
+        const auditAction = isLiveHttp ? 'PAYSTACK_VERIFIED' : 'PAYSTACK_FIXTURE_VERIFIED';
+        const auditActor = isLiveHttp ? 'paystack_adapter' : 'paystack_fixture';
         try {
           await db.insert(auditLogs).values({
             id: `aud_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`,
-            action: 'PAYSTACK_VERIFIED',
-            actor: 'paystack_adapter',
+            orderId: targetOrderId || null,
+            incidentId: targetIncidentId || null,
+            action: auditAction,
+            actor: auditActor,
             details: JSON.stringify({
+              provenance,
               reference: outcome.reference,
               outcome: outcome.outcome,
               amount: outcome.amount,
               currency: outcome.currency,
-              customerEmail: outcome.customerEmail,
+              customerEmail: redactEmail(outcome.customerEmail),
+              gatewayResponse: outcome.gatewayResponse || 'Successful',
+              verifiedAt: new Date().toISOString(),
             }),
           });
         } catch {
@@ -254,15 +303,21 @@ export async function verifyPaystackTransaction(
         };
 
         if (outcome.outcome === 'FAILED') {
+          const auditAction = isLiveHttp ? 'PAYSTACK_VERIFICATION_FAILED' : 'PAYSTACK_FIXTURE_FAILED';
+          const auditActor = isLiveHttp ? 'paystack_adapter' : 'paystack_fixture';
           try {
             await db.insert(auditLogs).values({
               id: `aud_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`,
-              action: 'PAYSTACK_VERIFICATION_FAILED',
-              actor: 'paystack_adapter',
+              orderId: targetOrderId || null,
+              incidentId: targetIncidentId || null,
+              action: auditAction,
+              actor: auditActor,
               details: JSON.stringify({
+                provenance,
                 reference: outcome.reference,
                 outcome: outcome.outcome,
                 error: 'gatewayResponse' in outcome ? outcome.gatewayResponse : 'Transaction failed',
+                verifiedAt: new Date().toISOString(),
               }),
             });
           } catch {

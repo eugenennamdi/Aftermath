@@ -161,6 +161,7 @@ export interface IncidentDetailView {
     customerVerified: string | null;
     customerMatched: MatchStatus;
     paymentVerificationState: PaymentVerificationState;
+    verificationProvenance: 'LIVE_HTTP' | 'SCOPED_FIXTURE' | 'WEBHOOK_ONLY' | 'UNVERIFIED';
     entitlementActive: boolean;
     gateAuthorized: boolean;
   };
@@ -454,48 +455,58 @@ export class QueryService {
       logs.some((l) => l.action === 'ENTITLEMENT_PROVISIONED' || l.action === 'INCIDENT_RESOLVED')
     );
 
-    // Determine simulation vs provider verification
-    const isSimulated =
-      logs.some((l) => {
-        if (!l.details) return false;
-        return (
-          l.details.includes('TEST_FIXTURE') ||
-          l.details.includes('SIMULATED') ||
-          l.details.includes('Simulated')
-        );
-      }) || Boolean(incident.errorDetail?.includes('SIMULATED'));
+    // Distinguish explicit fixture provenance vs real HTTP Paystack response
+    const hasFixtureVerification =
+      logs.some(
+        (l) =>
+          l.action === 'PAYSTACK_FIXTURE_VERIFIED' ||
+          l.actor === 'paystack_fixture' ||
+          (l.details &&
+            (l.details.includes('SCOPED_FIXTURE') ||
+              l.details.includes('TEST_FIXTURE') ||
+              l.details.includes('SIMULATED') ||
+              l.details.includes('Simulated')))
+      ) || Boolean(incident.errorDetail?.includes('SIMULATED'));
+
+    const hasLiveProviderVerification = logs.some(
+      (l) =>
+        (l.action === 'PAYSTACK_VERIFIED' || l.action === 'PAYMENT_VERIFIED') &&
+        l.actor === 'paystack_adapter' &&
+        (!l.details || !l.details.includes('SCOPED_FIXTURE'))
+    );
+
+    const hasFailedProviderVerification = logs.some(
+      (l) =>
+        (l.action === 'PAYSTACK_VERIFICATION_FAILED' ||
+          l.action === 'PAYMENT_VERIFICATION_FAILED' ||
+          l.action === 'PAYSTACK_FIXTURE_FAILED')
+    );
+    const hasChargeSuccess = pEvents.some(
+      (e) => e.status === 'success' && e.eventType === 'charge.success'
+    );
+    const hasChargeFailed = pEvents.some((e) => e.status === 'failed');
 
     let paymentVerificationState: PaymentVerificationState = 'UNVERIFIED';
+    let verificationProvenance: 'LIVE_HTTP' | 'SCOPED_FIXTURE' | 'WEBHOOK_ONLY' | 'UNVERIFIED' =
+      'UNVERIFIED';
 
-    if (isSimulated) {
+    if (hasLiveProviderVerification && !hasFixtureVerification) {
+      // Authoritative independent live HTTP verification response persisted
+      paymentVerificationState = 'PROVIDER_VERIFIED';
+      verificationProvenance = 'LIVE_HTTP';
+    } else if (hasFixtureVerification) {
       paymentVerificationState = 'SIMULATED_FIXTURE';
+      verificationProvenance = 'SCOPED_FIXTURE';
+    } else if (hasFailedProviderVerification || hasChargeFailed) {
+      paymentVerificationState = 'VERIFICATION_FAILED';
+      verificationProvenance = 'UNVERIFIED';
+    } else if (hasChargeSuccess) {
+      // Signed webhook observed, awaiting independent transaction verification
+      paymentVerificationState = 'WEBHOOK_OBSERVED';
+      verificationProvenance = 'WEBHOOK_ONLY';
     } else {
-      const hasLiveProviderVerification = logs.some(
-        (l) =>
-          (l.action === 'PAYSTACK_VERIFIED' || l.action === 'PAYMENT_VERIFIED') &&
-          l.actor === 'paystack_adapter'
-      );
-      const hasFailedProviderVerification = logs.some(
-        (l) =>
-          (l.action === 'PAYSTACK_VERIFICATION_FAILED' || l.action === 'PAYMENT_VERIFICATION_FAILED') &&
-          l.actor === 'paystack_adapter'
-      );
-      const hasChargeSuccess = pEvents.some(
-        (e) => e.status === 'success' && e.eventType === 'charge.success'
-      );
-      const hasChargeFailed = pEvents.some((e) => e.status === 'failed');
-
-      if (hasLiveProviderVerification) {
-        // Authoritative independent verification response persisted
-        paymentVerificationState = 'PROVIDER_VERIFIED';
-      } else if (hasFailedProviderVerification || hasChargeFailed) {
-        paymentVerificationState = 'VERIFICATION_FAILED';
-      } else if (hasChargeSuccess) {
-        // Signed webhook observed, awaiting independent transaction verification
-        paymentVerificationState = 'WEBHOOK_OBSERVED';
-      } else {
-        paymentVerificationState = 'UNVERIFIED';
-      }
+      paymentVerificationState = 'UNVERIFIED';
+      verificationProvenance = 'UNVERIFIED';
     }
 
     // Determine truthful match status and verified amounts strictly from recorded evidence
@@ -515,6 +526,7 @@ export class QueryService {
     const verificationLog = logs.find(
       (l) =>
         (l.action === 'PAYSTACK_VERIFIED' ||
+          l.action === 'PAYSTACK_FIXTURE_VERIFIED' ||
           l.action === 'PAYMENT_VERIFIED' ||
           l.action === 'INVESTIGATION_EVIDENCE_GATHERED') &&
         l.details
@@ -536,7 +548,11 @@ export class QueryService {
       }
     }
 
-    if (parsedVerificationDetails && paymentVerificationState === 'PROVIDER_VERIFIED') {
+    if (
+      parsedVerificationDetails &&
+      (paymentVerificationState === 'PROVIDER_VERIFIED' ||
+        paymentVerificationState === 'SIMULATED_FIXTURE')
+    ) {
       const amt = parsedVerificationDetails.amount ?? parsedVerificationDetails.paidAmount;
       if (typeof amt === 'number') {
         amountVerified = amt;
@@ -717,6 +733,7 @@ export class QueryService {
         customerVerified,
         customerMatched,
         paymentVerificationState,
+        verificationProvenance,
         entitlementActive: isEntActive,
         gateAuthorized,
       },

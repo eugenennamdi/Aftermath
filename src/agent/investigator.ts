@@ -551,7 +551,10 @@ Rules:
           break;
 
         case 'verify_paystack_transaction':
-          toolResult = await verifyPaystackTransaction(paymentReference, options?.paystackAdapter);
+          toolResult = await verifyPaystackTransaction(paymentReference, options?.paystackAdapter, {
+            orderId,
+            incidentId,
+          });
           gatheredEvidence.paystack = toolResult;
           break;
 
@@ -849,7 +852,10 @@ Rules:
           break;
 
         case 'verify_paystack_transaction':
-          toolResult = await verifyPaystackTransaction(paymentReference, options?.paystackAdapter);
+          toolResult = await verifyPaystackTransaction(paymentReference, options?.paystackAdapter, {
+            orderId,
+            incidentId,
+          });
           gatheredEvidence.paystack = toolResult;
           break;
 

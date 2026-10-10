@@ -24,6 +24,7 @@ import {
   isWorkerCronAuthorized,
   resetCheckoutRateLimits,
 } from '@/lib/auth';
+import { verifyPaystackTransaction } from '@/agent/tools';
 
 describe('Phase 3 Operator Console: Authoritative Query Layer, Security & Scenario Execution', () => {
   let customerId: string;
@@ -519,6 +520,148 @@ describe('Phase 3 Operator Console: Authoritative Query Layer, Security & Scenar
       expect(detailVerified?.evidenceDossier.currencyMatched).toBe('VERIFIED');
       expect(detailVerified?.evidenceDossier.customerMatched).toBe('VERIFIED');
       expect(detailVerified?.neatlogsTrace.traceUrl).toBe(`https://neatlogs.com/app/traces/${validTraceId}`);
+    });
+
+    it('enforces linked evidence provenance: assigns orderId and incidentId and redacts customer PII in audit records', async () => {
+      const orderId = `ord_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
+      const reference = generatePaystackReference();
+      const incId = `inc_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
+
+      await db.insert(orders).values({
+        id: orderId,
+        customerId,
+        planId: 'plan_starter_monthly',
+        paymentReference: reference,
+        expectedAmount: 500000,
+        currency: 'NGN',
+        status: 'PAID',
+        paidAt: new Date(),
+      });
+
+      await db.insert(incidents).values({
+        id: incId,
+        orderId,
+        paymentReference: reference,
+        customerId,
+        reason: 'PAID_BUT_UNFULFILLED',
+        status: 'OPEN',
+      });
+
+      // Mock live HTTP adapter
+      const mockLiveClient = {
+        adapterType: 'LIVE_HTTP' as const,
+        hasSecretKey: () => true,
+        verifyTransaction: async (ref: string) => ({
+          outcome: 'SUCCESS' as const,
+          reference: ref,
+          amount: 500000,
+          currency: 'NGN',
+          customerEmail,
+          paidAt: new Date(),
+          gatewayResponse: 'Successful',
+          rawData: {},
+        }),
+      };
+
+      const toolRes = await verifyPaystackTransaction(reference, mockLiveClient, {
+        orderId,
+        incidentId: incId,
+      });
+
+      expect(toolRes.verified).toBe(true);
+
+      // Verify the audit log record has orderId and incidentId assigned
+      const logs = await db
+        .select()
+        .from(auditLogs)
+        .where(eq(auditLogs.orderId, orderId));
+
+      const verifyLog = logs.find((l) => l.action === 'PAYSTACK_VERIFIED');
+      expect(verifyLog).toBeDefined();
+      expect(verifyLog?.incidentId).toBe(incId);
+      expect(verifyLog?.orderId).toBe(orderId);
+      expect(verifyLog?.actor).toBe('paystack_adapter');
+
+      // Verify customer email is redacted in stored details to protect PII
+      const details = JSON.parse(verifyLog!.details!);
+      expect(details.provenance).toBe('LIVE_HTTP');
+      expect(details.customerEmail).toContain('***@');
+      expect(details.customerEmail).not.toBe(customerEmail);
+
+      // Verify QueryService correctly reads the linked evidence and marks PROVIDER_VERIFIED
+      const detail = await queryService.getIncidentDetail(incId);
+      expect(detail?.evidenceDossier.paymentVerificationState).toBe('PROVIDER_VERIFIED');
+      expect(detail?.evidenceDossier.verificationProvenance).toBe('LIVE_HTTP');
+      expect(detail?.evidenceDossier.amountVerified).toBe(500000);
+      expect(detail?.evidenceDossier.amountMatched).toBe('VERIFIED');
+    });
+
+    it('enforces fixture isolation: never marks scoped simulated fixture as PROVIDER_VERIFIED', async () => {
+      const orderId = `ord_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
+      const reference = generatePaystackReference();
+      const incId = `inc_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
+
+      await db.insert(orders).values({
+        id: orderId,
+        customerId,
+        planId: 'plan_starter_monthly',
+        paymentReference: reference,
+        expectedAmount: 500000,
+        currency: 'NGN',
+        status: 'PAID',
+        paidAt: new Date(),
+      });
+
+      await db.insert(incidents).values({
+        id: incId,
+        orderId,
+        paymentReference: reference,
+        customerId,
+        reason: 'PAID_BUT_UNFULFILLED',
+        status: 'OPEN',
+      });
+
+      // Scoped test fixture adapter (NOT LIVE_HTTP)
+      const mockFixtureClient = {
+        adapterType: 'SCOPED_FIXTURE' as const,
+        hasSecretKey: () => true,
+        verifyTransaction: async (ref: string) => ({
+          outcome: 'SUCCESS' as const,
+          reference: ref,
+          amount: 500000,
+          currency: 'NGN',
+          customerEmail,
+          paidAt: new Date(),
+          gatewayResponse: 'Successful (Fixture)',
+          rawData: {},
+        }),
+      };
+
+      const toolRes = await verifyPaystackTransaction(reference, mockFixtureClient, {
+        orderId,
+        incidentId: incId,
+      });
+
+      expect(toolRes.verified).toBe(true);
+
+      // Verify audit log has action PAYSTACK_FIXTURE_VERIFIED and actor paystack_fixture
+      const logs = await db
+        .select()
+        .from(auditLogs)
+        .where(eq(auditLogs.orderId, orderId));
+
+      const fixtureLog = logs.find((l) => l.action === 'PAYSTACK_FIXTURE_VERIFIED');
+      expect(fixtureLog).toBeDefined();
+      expect(fixtureLog?.actor).toBe('paystack_fixture');
+
+      const details = JSON.parse(fixtureLog!.details!);
+      expect(details.provenance).toBe('SCOPED_FIXTURE');
+
+      // CRITICAL CTO INVARIANT: QueryService must report SIMULATED_FIXTURE, NEVER PROVIDER_VERIFIED
+      const detail = await queryService.getIncidentDetail(incId);
+      expect(detail?.evidenceDossier.paymentVerificationState).toBe('SIMULATED_FIXTURE');
+      expect(detail?.evidenceDossier.verificationProvenance).toBe('SCOPED_FIXTURE');
+      expect(detail?.evidenceDossier.paymentVerificationState).not.toBe('PROVIDER_VERIFIED');
     });
   });
 

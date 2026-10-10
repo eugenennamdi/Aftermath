@@ -59,6 +59,7 @@ export type PaystackVerificationOutcome =
 export interface PaystackVerificationAdapter {
   hasSecretKey(): boolean;
   verifyTransaction(reference: string): Promise<PaystackVerificationOutcome>;
+  readonly adapterType?: 'LIVE_HTTP' | 'SCOPED_FIXTURE';
 }
 
 /**
@@ -86,6 +87,7 @@ export function isValidPaystackReference(reference: string): boolean {
  * Server-only module; guarantees PAYSTACK_SECRET_KEY never leaves server environment.
  */
 export class PaystackClient implements PaystackVerificationAdapter {
+  public readonly adapterType = 'LIVE_HTTP' as const;
   private readonly secretKey: string;
   private readonly customFetch?: typeof fetch;
 
