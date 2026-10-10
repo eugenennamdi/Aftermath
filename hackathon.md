@@ -29,6 +29,8 @@
 - **Worker Feasibility:** Created minimal persistent background worker entrypoint (`src/worker/index.ts`) with lifecycle management and graceful `SIGTERM`/`SIGINT` shutdown.
 - **Database Strategy:** Configured Drizzle client (`src/db/index.ts`) with bounded 5-second connection verification and health check table schema (`src/db/schema.ts`).
 - **Baseline Testing:** Automated unit tests written and verified for neatlogs isolation, worker lifecycle, and bounded database connection.
+- **Entire Provenance:** Installed Entire CLI v0.11.4, enabled Antigravity agent integration, and attached session transcript `7b352b18-79d6-4899-b004-b68f02996652`. Generated Checkpoint ID `01M4JBBBQGYQJ784KSHCGDZ2SW`.
+- **Railway Configuration:** Created `Procfile` supporting dual web and worker processes.
 
 ## Demo
 - **Status:** Phase 0 Completed (Awaiting Phase 1 Authorization).
@@ -43,6 +45,6 @@
 - [x] neatlogs TypeScript SDK installed and instrumented.
 - [x] Project API key designated for ingestion.
 - [ ] Live neatlogs trace URL captured in dashboard (to be generated with live credentials).
-- [ ] Entire checkpoint ID captured and linked to public repository.
-- [ ] cfo.ai business plan model configured.
+- [x] Entire checkpoint ID captured and linked to commit (`01M4JBBBQGYQJ784KSHCGDZ2SW`).
+- [ ] cfo.ai business plan model configured (operator configuring separately).
 - [ ] 4 Acceptance scenarios demonstrated (Scenarios A, B, C, D).
