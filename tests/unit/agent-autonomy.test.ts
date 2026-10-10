@@ -243,16 +243,39 @@ describe('Autonomous AI Agent Model Decisions & Tool Calling (CTO Requirement 1 
   });
 
   it('Flow F: unavailable model API key safely defers without unauthorized mutation', async () => {
-    const prevKey = process.env.GEMINI_API_KEY;
-    delete process.env.GEMINI_API_KEY;
+    // Primary Provider: LiteLLM Sonnet
+    const prevLiteLLMKey = process.env.LITELLM_API_KEY;
+    delete process.env.LITELLM_API_KEY;
 
     try {
       const result = await investigateIncident(incidentId, orderId, reference);
       expect(result.decision).toBe('RETRY_LATER');
+      expect(result.provider).toBe('litellm_sonnet');
+      expect(result.summary).toContain('LITELLM_API_KEY is not configured');
+      expect(result.turnsExecuted).toBe(0);
+    } finally {
+      if (prevLiteLLMKey) process.env.LITELLM_API_KEY = prevLiteLLMKey;
+    }
+
+    // Rollback Provider: Gemini
+    const prevGeminiKey = process.env.GEMINI_API_KEY;
+    const prevProvider = process.env.INVESTIGATOR_PROVIDER;
+    delete process.env.GEMINI_API_KEY;
+    process.env.INVESTIGATOR_PROVIDER = 'gemini';
+
+    try {
+      const result = await investigateIncident(incidentId, orderId, reference);
+      expect(result.decision).toBe('RETRY_LATER');
+      expect(result.provider).toBe('google_gemini');
       expect(result.summary).toContain('GEMINI_API_KEY is not configured');
       expect(result.turnsExecuted).toBe(0);
     } finally {
-      if (prevKey) process.env.GEMINI_API_KEY = prevKey;
+      if (prevGeminiKey) process.env.GEMINI_API_KEY = prevGeminiKey;
+      if (prevProvider) {
+        process.env.INVESTIGATOR_PROVIDER = prevProvider;
+      } else {
+        delete process.env.INVESTIGATOR_PROVIDER;
+      }
     }
   });
 });

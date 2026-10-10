@@ -27,6 +27,7 @@
     "drizzle-orm": "^0.45.4",
     "neatlogs": "^1.1.28",
     "next": "^16.4.0",
+    "openai": "^7.32.0",
     "postcss": "^8.5.29",
     "postgres": "^3.4.9",
     "react": "^19.3.0",

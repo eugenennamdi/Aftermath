@@ -148,7 +148,7 @@ export interface IncidentDetailView {
     paymentVerified: boolean;
     entitlementActive: boolean;
     gateAuthorized: boolean;
-    verificationType: 'LIVE_GEMINI_SIMULATED_PAYSTACK' | 'LIVE_PAYSTACK' | 'SIMULATED_FIXTURE';
+    verificationType: 'LIVE_SONNET_SIMULATED_PAYSTACK' | 'LIVE_GEMINI_SIMULATED_PAYSTACK' | 'LIVE_PAYSTACK' | 'SIMULATED_FIXTURE';
   };
   neatlogsTrace: {
     traceId: string | null;
@@ -497,7 +497,7 @@ export class QueryService {
         paymentVerified,
         entitlementActive: isEntActive,
         gateAuthorized,
-        verificationType: 'LIVE_GEMINI_SIMULATED_PAYSTACK',
+        verificationType: 'LIVE_SONNET_SIMULATED_PAYSTACK',
       },
       neatlogsTrace: {
         traceId,

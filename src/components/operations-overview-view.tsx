@@ -242,7 +242,7 @@ export function OperationsOverviewView({
             <div className="space-y-3">
               <div className="flex items-center justify-between text-xs">
                 <span className="text-zinc-400">Investigator Model</span>
-                <span className="font-mono font-medium text-zinc-200">Gemini 3.8 Flash</span>
+                <span className="font-mono font-medium text-zinc-200">Claude Sonnet 4.6 (LiteLLM)</span>
               </div>
               <div className="flex items-center justify-between text-xs">
                 <span className="text-zinc-400">Telemetry Ingestion</span>

@@ -224,7 +224,7 @@ export default function OperatorConsolePage() {
             <span>Autonomous Recovery Engine</span>
           </div>
           <div className="flex items-center gap-4 text-zinc-600">
-            <span>Gemini 3.8 Flash</span>
+            <span>Claude Sonnet 4.6 (LiteLLM)</span>
             <span>neatlogs SDK</span>
             <span>PostgreSQL 17</span>
           </div>

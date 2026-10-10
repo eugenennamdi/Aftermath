@@ -61,9 +61,9 @@ async function runRealRecoveryWorkflow() {
 
   const worker = new RecoveryWorker({ workerId: `real_trace_worker_${Date.now()}` });
 
-  const EXECUTION_MODE = 'LIVE_GEMINI_SIMULATED_PAYSTACK';
+  const EXECUTION_MODE = 'LIVE_SONNET_SIMULATED_PAYSTACK';
   console.log(`[RecoveryTrace] Execution Mode: ${EXECUTION_MODE}`);
-  console.log('[RecoveryTrace] Model Provider: Google Gemini 3.8 Flash (Live API)');
+  console.log('[RecoveryTrace] Model Provider: Claude Sonnet 4.6 (LiteLLM Sponsored Gateway)');
   console.log('[RecoveryTrace] Payment Gateway: Paystack Test Mode (Simulated Success Fixture for Deterministic Order Matching)');
 
   // Claim the incident
@@ -73,7 +73,7 @@ async function runRealRecoveryWorkflow() {
   }
   console.log(`[RecoveryTrace] Claimed incident ${claimed.id} with fencing token ${claimed.fencingToken}`);
 
-  console.log('[RecoveryTrace] Executing recovery workflow with live Gemini 3.8 Flash model...');
+  console.log('[RecoveryTrace] Executing recovery workflow with live Claude Sonnet 4.6 model via LiteLLM...');
   const result = await worker.processClaimedIncident(claimed, {
     executionMode: EXECUTION_MODE,
   });

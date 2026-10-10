@@ -228,7 +228,7 @@ export function IncidentDetailModal({
                         </span>
                       </div>
                       <p className="text-xs text-zinc-400">
-                        Autonomous agent claimed incident with fencing token #{data.incident.fencingToken}. Runtime model: <code className="text-zinc-200">Gemini 3.8 Flash</code> via official Google GenAI SDK.
+                        Autonomous agent claimed incident with fencing token #{data.incident.fencingToken}. Runtime model: <code className="text-zinc-200">Claude Sonnet 4.6</code> via neatHack LiteLLM gateway.
                       </p>
                     </div>
                   </div>
@@ -444,7 +444,7 @@ export function IncidentDetailModal({
                       </span>
                     </div>
                     <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-900 text-zinc-400 border border-zinc-800">
-                      LIVE_GEMINI_SIMULATED_PAYSTACK
+                      LIVE_SONNET_SIMULATED_PAYSTACK
                     </span>
                   </div>
 
