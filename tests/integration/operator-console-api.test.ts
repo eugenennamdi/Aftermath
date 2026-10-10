@@ -13,6 +13,12 @@ import { generatePaystackReference } from '@/lib/paystack';
 import { eq } from 'drizzle-orm';
 import { NextRequest } from 'next/server';
 import { GET as getIncidentRoute } from '@/app/api/incidents/[id]/route';
+import { GET as getIncidentsListRoute } from '@/app/api/incidents/route';
+import { GET as getOverviewRoute } from '@/app/api/incidents/overview/route';
+import { POST as runScenarioRoute } from '@/app/api/scenarios/run/route';
+import { POST as workerTickRoute } from '@/app/api/worker/tick/route';
+import { paymentEvents } from '@/db/schema';
+import { validateCsrfOrOrigin, isWorkerCronAuthorized } from '@/lib/auth';
 
 describe('Phase 3 Operator Console: Authoritative Query Layer, Security & Scenario Execution', () => {
   let customerId: string;
@@ -135,6 +141,126 @@ describe('Phase 3 Operator Console: Authoritative Query Layer, Security & Scenar
       const json = await response.json();
       expect(json.incident.id).toBe(incId);
     });
+
+    it('enforces authentication on GET /api/incidents (401 when missing, 200 when authenticated)', async () => {
+      const unauthReq = new NextRequest('http://localhost:3000/api/incidents');
+      const unauthRes = await getIncidentsListRoute(unauthReq);
+      expect(unauthRes.status).toBe(401);
+      const unauthJson = await unauthRes.json();
+      expect(unauthJson.authenticated).toBe(false);
+
+      const token = createOperatorSessionToken();
+      const authReq = new NextRequest('http://localhost:3000/api/incidents', {
+        headers: { cookie: `aftermath_operator_session=${token}` },
+      });
+      const authRes = await getIncidentsListRoute(authReq);
+      expect(authRes.status).toBe(200);
+      const authJson = await authRes.json();
+      expect(Array.isArray(authJson.incidents)).toBe(true);
+    });
+
+    it('returns safe public summary on GET /api/incidents/overview when unauthenticated', async () => {
+      const unauthReq = new NextRequest('http://localhost:3000/api/incidents/overview');
+      const unauthRes = await getOverviewRoute(unauthReq);
+      expect(unauthRes.status).toBe(200);
+      const unauthJson = await unauthRes.json();
+      expect(unauthJson.authenticated).toBe(false);
+      expect(unauthJson.metrics).toBeDefined();
+      expect(unauthJson.workerFleet).toBeDefined();
+      expect(unauthJson.recentActivity).toEqual([]); // Stripped to prevent tenant info leak
+
+      const token = createOperatorSessionToken();
+      const authReq = new NextRequest('http://localhost:3000/api/incidents/overview', {
+        headers: { cookie: `aftermath_operator_session=${token}` },
+      });
+      const authRes = await getOverviewRoute(authReq);
+      expect(authRes.status).toBe(200);
+      const authJson = await authRes.json();
+      expect(authJson.authenticated).toBe(true);
+      expect(Array.isArray(authJson.recentActivity)).toBe(true);
+    });
+
+    it('enforces authentication and origin on POST /api/scenarios/run', async () => {
+      // Unauthenticated
+      const unauthReq = new NextRequest('http://localhost:3000/api/scenarios/run', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          origin: 'http://localhost:3000',
+        },
+        body: JSON.stringify({ scenario: 'A' }),
+      });
+      const unauthRes = await runScenarioRoute(unauthReq);
+      expect(unauthRes.status).toBe(401);
+
+      // Untrusted Origin
+      const token = createOperatorSessionToken();
+      const untrustedReq = new NextRequest('http://localhost:3000/api/scenarios/run', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie: `aftermath_operator_session=${token}`,
+          origin: 'http://evil.com',
+        },
+        body: JSON.stringify({ scenario: 'A' }),
+      });
+      const untrustedRes = await runScenarioRoute(untrustedReq);
+      expect(untrustedRes.status).toBe(403);
+    });
+
+    it('enforces operator session or CRON_SECRET on POST /api/worker/tick', async () => {
+      // Unauthenticated without cron secret -> 401
+      const unauthReq = new NextRequest('http://localhost:3000/api/worker/tick', {
+        method: 'POST',
+        headers: { origin: 'http://localhost:3000', 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const unauthRes = await workerTickRoute(unauthReq);
+      expect(unauthRes.status).toBe(401);
+
+      // With valid CRON_SECRET header -> passes auth
+      process.env.CRON_SECRET = 'valid-cron-secret-at-least-16-chars';
+      try {
+        const cronReq = new NextRequest('http://localhost:3000/api/worker/tick', {
+          method: 'POST',
+          headers: {
+            'x-cron-secret': 'valid-cron-secret-at-least-16-chars',
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({}),
+        });
+        const cronRes = await workerTickRoute(cronReq);
+        expect(cronRes.status).toBe(200);
+      } finally {
+        delete process.env.CRON_SECRET;
+      }
+    }, 15000);
+
+    it('enforces strict CSRF origin validation: rejects mismatched ports and spoofed hosts', () => {
+      // Valid matching origin
+      const validReq = new NextRequest('http://localhost:3000/api/checkout/initialize', {
+        method: 'POST',
+        headers: { origin: 'http://localhost:3000' },
+      });
+      expect(validateCsrfOrOrigin(validReq)).toBe(true);
+
+      // Port mismatch (e.g. attacker running on port 4000)
+      const wrongPortReq = new NextRequest('http://localhost:3000/api/checkout/initialize', {
+        method: 'POST',
+        headers: { origin: 'http://localhost:4000' },
+      });
+      expect(validateCsrfOrOrigin(wrongPortReq)).toBe(false);
+
+      // Spoofed Host header with matching attacker origin
+      const spoofedHostReq = new NextRequest('http://evil.com/api/checkout/initialize', {
+        method: 'POST',
+        headers: {
+          host: 'evil.com',
+          origin: 'http://evil.com',
+        },
+      });
+      expect(validateCsrfOrOrigin(spoofedHostReq)).toBe(false);
+    });
   });
 
   describe('2. PII Sanitization & Data Redaction', () => {
@@ -183,7 +309,7 @@ describe('Phase 3 Operator Console: Authoritative Query Layer, Security & Scenar
       expect(target?.currency).toBe('NGN');
     });
 
-    it('retrieves full 10-step investigation detail and truthful evidence dossier', async () => {
+    it('retrieves full 10-step investigation detail and enforces truthful payment evidence provenance', async () => {
       const incId = `inc_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
       await db.insert(incidents).values({
         id: incId,
@@ -197,18 +323,52 @@ describe('Phase 3 Operator Console: Authoritative Query Layer, Security & Scenar
         resolvedAt: new Date(),
       });
 
-      const detail = await queryService.getIncidentDetail(incId);
-      expect(detail).not.toBeNull();
-      expect(detail?.incident.id).toBe(incId);
-      expect(detail?.order.id).toBe(orderId);
-      expect(detail?.customer.emailRedacted).toContain('***@');
-      expect(detail?.evidenceDossier).toBeDefined();
-      expect(detail?.evidenceDossier.amountMatched).toBe('VERIFIED');
-      expect(detail?.evidenceDossier.currencyMatched).toBe('VERIFIED');
-      expect(detail?.evidenceDossier.customerMatched).toBe('VERIFIED');
-      expect(detail?.evidenceDossier.paymentVerificationState).toBeDefined();
-      expect(detail?.neatlogsTrace).toBeDefined();
-      expect(detail?.neatlogsTrace.workflowName).toBeDefined();
+      // 1. Without paymentEvents or adapter logs: strictly UNVERIFIED and UNKNOWN (never infer PROVIDER_VERIFIED from RESOLVED)
+      const detailUnverified = await queryService.getIncidentDetail(incId);
+      expect(detailUnverified).not.toBeNull();
+      expect(detailUnverified?.incident.id).toBe(incId);
+      expect(detailUnverified?.order.id).toBe(orderId);
+      expect(detailUnverified?.customer.emailRedacted).toContain('***@');
+      expect(detailUnverified?.evidenceDossier).toBeDefined();
+      expect(detailUnverified?.evidenceDossier.paymentVerificationState).toBe('UNVERIFIED');
+      expect(detailUnverified?.evidenceDossier.amountMatched).toBe('UNKNOWN');
+      expect(detailUnverified?.evidenceDossier.currencyMatched).toBe('UNKNOWN');
+      expect(detailUnverified?.evidenceDossier.customerMatched).toBe('UNKNOWN');
+      expect(detailUnverified?.evidenceDossier.amountVerified).toBeNull();
+      expect(detailUnverified?.neatlogsTrace.traceUrl).toBeNull();
+
+      // 2. Insert authoritative paymentEvents record: verify provider verification provenance
+      await db.insert(paymentEvents).values({
+        id: `pe_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`,
+        orderId,
+        paymentReference: reference,
+        eventType: 'charge.success',
+        status: 'success',
+        amount: 500000,
+        currency: 'NGN',
+        customerEmail: customerEmail,
+        payloadHash: crypto.createHash('sha256').update(reference).digest('hex'),
+        gatewayResponse: 'Successful',
+      });
+
+      // 3. Insert audit log with valid 32-character hex traceId
+      const validTraceId = 'a1b2c3d4e5f60718293a4b5c6d7e8f90';
+      await db.insert(auditLogs).values({
+        id: `log_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`,
+        incidentId: incId,
+        orderId,
+        action: 'INVESTIGATION_STARTED',
+        actor: 'recovery_agent',
+        details: JSON.stringify({ traceId: validTraceId }),
+      });
+
+      const detailVerified = await queryService.getIncidentDetail(incId);
+      expect(detailVerified?.evidenceDossier.paymentVerificationState).toBe('PROVIDER_VERIFIED');
+      expect(detailVerified?.evidenceDossier.amountMatched).toBe('VERIFIED');
+      expect(detailVerified?.evidenceDossier.amountVerified).toBe(500000);
+      expect(detailVerified?.evidenceDossier.currencyMatched).toBe('VERIFIED');
+      expect(detailVerified?.evidenceDossier.customerMatched).toBe('VERIFIED');
+      expect(detailVerified?.neatlogsTrace.traceUrl).toBe(`https://neatlogs.com/app/traces/${validTraceId}`);
     });
   });
 

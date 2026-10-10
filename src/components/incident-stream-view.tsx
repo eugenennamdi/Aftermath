@@ -12,6 +12,7 @@ import {
   CopyIcon,
   ArrowRightIcon,
   ClockIcon,
+  LockIcon,
 } from './ui/icons';
 
 interface IncidentStreamViewProps {
@@ -27,6 +28,8 @@ interface IncidentStreamViewProps {
   onStatusChange: (status: string) => void;
   searchQuery: string;
   onSearchChange: (query: string) => void;
+  isOperator?: boolean;
+  onUnlockClick?: () => void;
 }
 
 const STATUS_FILTERS = [
@@ -51,6 +54,8 @@ export function IncidentStreamView({
   onStatusChange,
   searchQuery,
   onSearchChange,
+  isOperator = false,
+  onUnlockClick,
 }: IncidentStreamViewProps) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
@@ -114,6 +119,28 @@ export function IncidentStreamView({
           <div className="p-12 text-center space-y-3">
             <span className="w-5 h-5 border-2 border-zinc-500 border-t-zinc-200 rounded-full animate-spin inline-block" />
             <p className="text-xs text-zinc-500 font-mono">Loading authoritative records...</p>
+          </div>
+        ) : error === 'AUTH_REQUIRED' || !isOperator ? (
+          <div className="p-16 text-center space-y-4 max-w-md mx-auto">
+            <div className="w-10 h-10 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center mx-auto text-zinc-400">
+              <LockIcon size={18} />
+            </div>
+            <div className="space-y-1.5">
+              <p className="text-sm font-semibold text-zinc-200">Operator Authentication Required</p>
+              <p className="text-xs text-zinc-400 leading-relaxed">
+                Live incident streams expose tenant order bindings and Paystack transaction references. Authenticate with your operator passphrase to inspect and manage recovery incidents.
+              </p>
+            </div>
+            {onUnlockClick && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={onUnlockClick}
+                icon={<LockIcon size={13} />}
+              >
+                Unlock Operator Console
+              </Button>
+            )}
           </div>
         ) : error ? (
           <div className="p-12 text-center space-y-2">

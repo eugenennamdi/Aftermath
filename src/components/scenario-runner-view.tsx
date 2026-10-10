@@ -46,7 +46,7 @@ const SCENARIOS: ScenarioCardMeta[] = [
     title: 'Transient Failure & Idempotent Reconciliation',
     category: 'Crash Recovery',
     description:
-      'Worker encounters a transient upstream failure and backs off. Later, a worker discovers that entitlement was already provisioned during an interrupted cycle, reconciling it without duplicate provisioning.',
+      'Worker encounters a transient upstream failure and schedules retry with backoff (accelerated for demonstration). Later, a worker discovers that entitlement was already provisioned during an interrupted cycle, reconciling it without duplicate provisioning.',
     injectedFailure: 'SIMULATED FIXTURE: Upstream 503 Gateway Timeout with subsequent active entitlement.',
     expectedOutcome: 'Incident RESOLVED • Exactly 1 Entitlement (Zero Duplicates)',
   },
@@ -64,9 +64,9 @@ const SCENARIOS: ScenarioCardMeta[] = [
     title: 'Duplicate Events & Concurrency Idempotency',
     category: 'Relational Safety',
     description:
-      'Simultaneous webhook deliveries and reconciliation sweep trigger concurrent fulfillment calls. Database uniqueness constraint on order_id eliminates race conditions.',
+      'Simultaneous webhook deliveries and reconciliation sweep trigger competing worker claims and concurrent fulfillment calls. Validates worker lock exclusion via FOR UPDATE SKIP LOCKED and relational uniqueness idempotency on entitlements.order_id.',
     injectedFailure: 'SIMULATED FIXTURE: Dual concurrent execution threads for identical order.',
-    expectedOutcome: '1 Entitlement created • ON CONFLICT DO NOTHING holds',
+    expectedOutcome: '1 Entitlement created • Lock exclusion holds • Zero duplicate access',
   },
 ];
 

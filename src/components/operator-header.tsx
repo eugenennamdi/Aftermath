@@ -42,26 +42,26 @@ export function OperatorHeader({
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           {/* Brand & System Status */}
-          <div className="flex items-center gap-6">
-            <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-6 min-w-0">
+            <div className="flex items-center gap-2 sm:gap-3 shrink-0">
               <div className="w-8 h-8 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-100 shadow-inner">
                 <ShieldIcon size={16} />
               </div>
-              <div className="flex items-center gap-2">
-                <span className="font-semibold text-sm tracking-tight text-zinc-100">
+              <div className="flex items-center gap-1.5 sm:gap-2">
+                <span className="font-semibold text-sm tracking-tight text-zinc-100 hidden sm:inline">
                   Aftermath
                 </span>
-                <span className="hidden sm:inline-block text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-zinc-900 text-zinc-400 border border-zinc-800">
+                <span className="hidden md:inline-block text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-zinc-900 text-zinc-400 border border-zinc-800">
                   Console
                 </span>
               </div>
             </div>
 
             {/* Navigation Tabs */}
-            <nav className="flex items-center p-1 rounded-xl bg-zinc-900/60 border border-zinc-800/60 text-xs font-medium">
+            <nav className="flex items-center p-0.5 sm:p-1 rounded-xl bg-zinc-900/60 border border-zinc-800/60 text-[11px] sm:text-xs font-medium shrink-0">
               <button
                 onClick={() => onTabChange('overview')}
-                className={`px-3 py-1.5 rounded-lg transition-all ${
+                className={`px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg transition-all ${
                   activeTab === 'overview'
                     ? 'bg-zinc-800 text-zinc-100 shadow-sm'
                     : 'text-zinc-400 hover:text-zinc-200'
@@ -71,7 +71,7 @@ export function OperatorHeader({
               </button>
               <button
                 onClick={() => onTabChange('incidents')}
-                className={`px-3 py-1.5 rounded-lg transition-all ${
+                className={`px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg transition-all ${
                   activeTab === 'incidents'
                     ? 'bg-zinc-800 text-zinc-100 shadow-sm'
                     : 'text-zinc-400 hover:text-zinc-200'
@@ -81,7 +81,7 @@ export function OperatorHeader({
               </button>
               <button
                 onClick={() => onTabChange('scenarios')}
-                className={`px-3 py-1.5 rounded-lg transition-all ${
+                className={`px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg transition-all ${
                   activeTab === 'scenarios'
                     ? 'bg-zinc-800 text-zinc-100 shadow-sm'
                     : 'text-zinc-400 hover:text-zinc-200'
@@ -93,7 +93,7 @@ export function OperatorHeader({
           </div>
 
           {/* Right Action Island */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
             {/* Worker Lease Indicator */}
             <div className="hidden md:flex items-center gap-2 px-2.5 py-1 rounded-lg bg-zinc-900/60 border border-zinc-800/80 text-[11px] font-mono">
               <span
@@ -128,10 +128,11 @@ export function OperatorHeader({
                 variant="outline"
                 size="sm"
                 onClick={onLogoutClick}
-                className="border-emerald-500/30 text-emerald-400 bg-emerald-950/20"
+                className="border-emerald-500/30 text-emerald-400 bg-emerald-950/20 text-[11px] px-2 sm:px-2.5"
                 icon={<UnlockIcon size={13} />}
               >
-                Operator Active
+                <span className="hidden sm:inline">Operator Active</span>
+                <span className="sm:hidden">Active</span>
               </Button>
             ) : (
               <Button

@@ -1,8 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { isOperatorAuthenticated } from '@/lib/auth';
 import { queryService } from '@/services/query';
 
 export async function GET(req: NextRequest) {
   try {
+    if (!isOperatorAuthenticated(req)) {
+      return NextResponse.json(
+        {
+          error: 'Unauthorized: Operator session required to access incident stream',
+          authenticated: false,
+          incidents: [],
+          total: 0,
+        },
+        { status: 401 }
+      );
+    }
+
     const { searchParams } = new URL(req.url);
     const status = searchParams.get('status') || undefined;
     const search = searchParams.get('search') || undefined;

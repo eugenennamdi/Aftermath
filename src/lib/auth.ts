@@ -190,49 +190,132 @@ export function clearOperatorCookie(res: NextResponse): void {
   });
 }
 
+export const MIN_CRON_SECRET_LENGTH = 16;
+
+/**
+ * Returns the configured CRON_SECRET or null if missing/inadequate.
+ * Fails closed: minimum 16 characters required.
+ */
+export function getCronSecret(): string | null {
+  const secret = process.env.CRON_SECRET;
+  if (!secret || typeof secret !== 'string') return null;
+  const trimmed = secret.trim();
+  if (trimmed.length < MIN_CRON_SECRET_LENGTH) return null;
+  return trimmed;
+}
+
+/**
+ * Verifies if the request provides a valid CRON_SECRET via Authorization Bearer or x-cron-secret header.
+ * Uses constant-time equality check to prevent timing attacks.
+ */
+export function isWorkerCronAuthorized(req: NextRequest): boolean {
+  const expectedSecret = getCronSecret();
+  if (!expectedSecret) return false;
+
+  const authHeader = req.headers.get('authorization');
+  const xCronHeader = req.headers.get('x-cron-secret');
+
+  let candidate: string | null = null;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    candidate = authHeader.slice(7).trim();
+  } else if (xCronHeader) {
+    candidate = xCronHeader.trim();
+  }
+
+  if (!candidate) return false;
+
+  const inputBuffer = Buffer.from(candidate);
+  const expectedBuffer = Buffer.from(expectedSecret);
+  if (inputBuffer.length !== expectedBuffer.length) return false;
+
+  return crypto.timingSafeEqual(inputBuffer, expectedBuffer);
+}
+
+/**
+ * Derives the explicit set of trusted origins from environment.
+ * Matches scheme, host, and port exactly.
+ */
+export function getTrustedOrigins(): Set<string> {
+  const origins = new Set<string>();
+
+  const appUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL;
+  if (appUrl) {
+    try {
+      origins.add(new URL(appUrl).origin);
+    } catch {
+      // Invalid URL
+    }
+  }
+
+  const extraOrigins = process.env.TRUSTED_ORIGINS;
+  if (extraOrigins) {
+    for (const item of extraOrigins.split(',')) {
+      const trimmed = item.trim();
+      if (trimmed) {
+        try {
+          origins.add(new URL(trimmed).origin);
+        } catch {
+          // Invalid origin
+        }
+      }
+    }
+  }
+
+  // Default to standard local host origins if none explicitly provided
+  if (origins.size === 0) {
+    origins.add('http://localhost:3000');
+    origins.add('http://127.0.0.1:3000');
+  }
+
+  return origins;
+}
+
 /**
  * Validates request origin for state-mutating requests to prevent CSRF.
- * Compares incoming Origin header against Host or configured trusted application URL.
+ * Strictly checks Origin against APP_URL / TRUSTED_ORIGINS.
+ * REJECTS arbitrary Host header matching to prevent host spoofing and cross-port attacks.
  */
 export function validateCsrfOrOrigin(req: NextRequest): boolean {
   // Safe HTTP read methods
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return true;
 
   const origin = req.headers.get('origin');
-  const host = req.headers.get('host');
-  const trustedAppUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL;
+  const trustedOrigins = getTrustedOrigins();
 
-  // If no origin header is provided, inspect Sec-Fetch-Site
-  if (!origin) {
-    const secFetchSite = req.headers.get('sec-fetch-site');
-    if (secFetchSite && (secFetchSite === 'cross-site')) {
+  if (origin) {
+    try {
+      const originUrl = new URL(origin);
+      // Strictly match exact origin: scheme + hostname + port
+      return trustedOrigins.has(originUrl.origin);
+    } catch {
       return false;
     }
-    // Allow non-browser server-to-server or test requests if host header is present
-    return Boolean(host);
   }
 
-  try {
-    const originUrl = new URL(origin);
-
-    // Host matching (ignoring port differences in local environments)
-    if (host) {
-      const hostOnly = host.split(':')[0];
-      if (originUrl.host === host || originUrl.hostname === hostOnly) {
-        return true;
-      }
-    }
-
-    // Configured trusted app URL matching
-    if (trustedAppUrl) {
-      const appUrl = new URL(trustedAppUrl);
-      if (originUrl.host === appUrl.host || originUrl.hostname === appUrl.hostname) {
-        return true;
-      }
-    }
-
-    return false;
-  } catch {
+  // If no Origin header (e.g. server-to-server or test requests):
+  // Inspect Sec-Fetch-Site to block cross-site browser requests that omit Origin
+  const secFetchSite = req.headers.get('sec-fetch-site');
+  if (secFetchSite && secFetchSite === 'cross-site') {
     return false;
   }
+
+  // Inspect Referer header if present
+  const referer = req.headers.get('referer');
+  if (referer) {
+    try {
+      const refUrl = new URL(referer);
+      return trustedOrigins.has(refUrl.origin);
+    } catch {
+      return false;
+    }
+  }
+
+  // For requests without Origin or Referer:
+  // Allow only if caller provides valid operator session, valid CRON_SECRET, or running in test environment
+  if (isOperatorAuthenticated(req) || isWorkerCronAuthorized(req) || process.env.NODE_ENV === 'test') {
+    return true;
+  }
+
+  return false;
 }
+

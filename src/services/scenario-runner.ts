@@ -222,7 +222,7 @@ export class ScenarioRunnerService {
 
     steps.push({
       title: 'Transient Failure & Retry Scheduled',
-      description: `Worker 1 received 503, scheduled retry #${retriedInc.retryCount} with exponential backoff, and released lease.`,
+      description: `Worker 1 received 503, scheduled retry #${retriedInc.retryCount} with exponential backoff, and released lease (retry #1 backoff is accelerated to 0s for demonstration purposes).`,
       status: 'COMPLETE',
       timestamp: new Date(),
     });
@@ -294,7 +294,7 @@ export class ScenarioRunnerService {
       orderId,
       entitlementId: entId,
       finalIncidentStatus: finalInc.status,
-      summary: `Transient error safely backed off, active entitlement discovered on subsequent claim, and reconciled without duplicate access.`,
+      summary: `Transient error safely backed off (retry #1 backoff accelerated for demonstration), active entitlement discovered on subsequent claim, and reconciled without duplicate access.`,
       steps,
     };
   }
@@ -459,7 +459,7 @@ export class ScenarioRunnerService {
 
     steps.push({
       title: 'Competing Worker Claim Evaluation',
-      description: `Worker 1 claim: ${claim1 ? 'ACQUIRED' : 'LOCKED_OUT'}. Worker 2 claim: ${claim2 ? 'ACQUIRED' : 'LOCKED_OUT'}. FOR UPDATE SKIP LOCKED prevented double claiming.`,
+      description: `Worker 1 claim: ${claim1 ? 'ACQUIRED' : 'LOCKED_OUT'}. Worker 2 claim: ${claim2 ? 'ACQUIRED' : 'LOCKED_OUT'}. Validated worker lock exclusion via FOR UPDATE SKIP LOCKED (only one worker acquired the row lease).`,
       status: 'COMPLETE',
       timestamp: new Date(),
     });
@@ -499,7 +499,7 @@ export class ScenarioRunnerService {
       orderId,
       entitlementId: allEnts[0]?.id ?? null,
       finalIncidentStatus: incident.status,
-      summary: `Simultaneous worker claims and fulfillment attempts resolved idempotently: relational engine uniqueness and row locking prevented duplicate access.`,
+      summary: `Simultaneous worker claims and concurrent fulfillment attempts validated worker lock exclusion (FOR UPDATE SKIP LOCKED) and relational uniqueness idempotency on entitlements.order_id, creating exactly 1 entitlement.`,
       steps,
     };
   }

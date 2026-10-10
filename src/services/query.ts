@@ -133,6 +133,7 @@ export interface IncidentDetailView {
   } | null;
   paymentEvents: Array<{
     id: string;
+    paymentReference: string;
     eventType: string;
     status: string;
     amount: number;
@@ -453,21 +454,41 @@ export class QueryService {
     );
 
     // Determine simulation vs provider verification
-    const isSimulated = logs.some((l) => {
-      if (!l.details) return false;
-      return l.details.includes('TEST_FIXTURE') || l.details.includes('SIMULATED') || l.details.includes('Simulated');
-    }) || Boolean(incident.errorDetail?.includes('SIMULATED'));
+    const isSimulated =
+      logs.some((l) => {
+        if (!l.details) return false;
+        return (
+          l.details.includes('TEST_FIXTURE') ||
+          l.details.includes('SIMULATED') ||
+          l.details.includes('Simulated')
+        );
+      }) || Boolean(incident.errorDetail?.includes('SIMULATED'));
 
     let paymentVerificationState: PaymentVerificationState = 'UNVERIFIED';
+
     if (isSimulated) {
       paymentVerificationState = 'SIMULATED_FIXTURE';
-    } else if (pEvents.some((e) => e.status === 'success') || incident.status === 'RESOLVED') {
-      paymentVerificationState = 'PROVIDER_VERIFIED';
-    } else if (incident.status === 'ESCALATED' || pEvents.some((e) => e.status === 'failed')) {
-      paymentVerificationState = 'VERIFICATION_FAILED';
+    } else {
+      const hasChargeSuccess = pEvents.some(
+        (e) => e.status === 'success' && e.eventType === 'charge.success'
+      );
+      const hasChargeFailed = pEvents.some((e) => e.status === 'failed');
+      const hasLiveProviderVerification = logs.some(
+        (l) =>
+          (l.action === 'PAYSTACK_VERIFIED' || l.action === 'PAYMENT_VERIFIED') &&
+          l.actor === 'paystack_adapter'
+      );
+
+      if (hasChargeSuccess || hasLiveProviderVerification) {
+        paymentVerificationState = 'PROVIDER_VERIFIED';
+      } else if (hasChargeFailed) {
+        paymentVerificationState = 'VERIFICATION_FAILED';
+      } else {
+        paymentVerificationState = 'UNVERIFIED';
+      }
     }
 
-    // Determine truthful match status and verified amounts
+    // Determine truthful match status and verified amounts strictly from recorded evidence
     const amountExpected = order.expectedAmount;
     let amountVerified: number | null = null;
     let amountMatched: MatchStatus = 'UNKNOWN';
@@ -486,37 +507,67 @@ export class QueryService {
       amountMatched = latest.amount === order.expectedAmount ? 'VERIFIED' : 'MISMATCH';
 
       currencyVerified = latest.currency;
-      currencyMatched = latest.currency.toUpperCase() === order.currency.toUpperCase() ? 'VERIFIED' : 'MISMATCH';
+      currencyMatched =
+        latest.currency.toUpperCase() === order.currency.toUpperCase() ? 'VERIFIED' : 'MISMATCH';
 
       customerVerified = redactEmail(latest.customerEmail);
-      customerMatched = latest.customerEmail.toLowerCase() === customer.email.toLowerCase() ? 'VERIFIED' : 'MISMATCH';
-    } else if (gateAuthorized) {
-      // Deterministic gate strictly verifies mathematical equality before authorizing
-      amountVerified = order.expectedAmount;
-      amountMatched = 'VERIFIED';
+      customerMatched =
+        latest.customerEmail.toLowerCase() === customer.email.toLowerCase()
+          ? 'VERIFIED'
+          : 'MISMATCH';
+    } else {
+      // Check if audit logs contain explicit recorded verification details from adapter
+      const verificationLog = logs.find(
+        (l) =>
+          (l.action === 'PAYSTACK_VERIFIED' ||
+            l.action === 'PAYMENT_VERIFIED' ||
+            l.action === 'INVESTIGATION_EVIDENCE_GATHERED') &&
+          l.details
+      );
 
-      currencyVerified = order.currency;
-      currencyMatched = 'VERIFIED';
-
-      customerVerified = redactEmail(customer.email);
-      customerMatched = 'VERIFIED';
-    } else if (incident.status === 'ESCALATED') {
-      const errText = `${incident.decisionSummary || ''} ${incident.errorDetail || ''} ${incident.reason || ''}`;
-      
-      const amountMatchRegex = /Paid amount \((\d+)\)/i.exec(errText);
-      if (amountMatchRegex) {
-        amountVerified = parseInt(amountMatchRegex[1], 10);
-        amountMatched = 'MISMATCH';
-      } else if (/amount/i.test(errText) && (/mismatch|does not match|underpaid/i.test(errText))) {
-        amountMatched = 'MISMATCH';
+      if (verificationLog?.details) {
+        try {
+          const parsed = JSON.parse(verificationLog.details);
+          if (typeof parsed.paidAmount === 'number' || typeof parsed.amount === 'number') {
+            amountVerified = parsed.paidAmount ?? parsed.amount;
+            amountMatched = amountVerified === order.expectedAmount ? 'VERIFIED' : 'MISMATCH';
+          }
+          if (typeof parsed.currency === 'string') {
+            currencyVerified = parsed.currency;
+            currencyMatched =
+              parsed.currency.toUpperCase() === order.currency.toUpperCase()
+                ? 'VERIFIED'
+                : 'MISMATCH';
+          }
+          if (typeof parsed.customerEmail === 'string' || typeof parsed.email === 'string') {
+            const email = parsed.customerEmail ?? parsed.email;
+            customerVerified = redactEmail(email);
+            customerMatched =
+              email.toLowerCase() === customer.email.toLowerCase() ? 'VERIFIED' : 'MISMATCH';
+          }
+        } catch {
+          // Ignore JSON parse errors for freeform log details
+        }
       }
 
-      if (/currency/i.test(errText) && (/mismatch|does not match/i.test(errText))) {
-        currencyMatched = 'MISMATCH';
-      }
+      // If still UNKNOWN and incident was escalated due to an explicit mismatch:
+      if (amountMatched === 'UNKNOWN' && incident.status === 'ESCALATED') {
+        const errText = `${incident.decisionSummary || ''} ${incident.errorDetail || ''} ${incident.reason || ''}`;
+        const amountMatchRegex = /Paid amount \((\d+)\)/i.exec(errText);
+        if (amountMatchRegex) {
+          amountVerified = parseInt(amountMatchRegex[1], 10);
+          amountMatched = 'MISMATCH';
+        } else if (/amount/i.test(errText) && (/mismatch|does not match|underpaid/i.test(errText))) {
+          amountMatched = 'MISMATCH';
+        }
 
-      if (/payer email|customer email/i.test(errText) && (/mismatch|does not match/i.test(errText))) {
-        customerMatched = 'MISMATCH';
+        if (/currency/i.test(errText) && (/mismatch|does not match/i.test(errText))) {
+          currencyMatched = 'MISMATCH';
+        }
+
+        if (/payer email|customer email/i.test(errText) && (/mismatch|does not match/i.test(errText))) {
+          customerMatched = 'MISMATCH';
+        }
       }
     }
 
@@ -531,7 +582,7 @@ export class QueryService {
             break;
           }
         } catch {
-          const match = /traceId['":\s]+([a-zA-Z0-9_-]{16,64})/.exec(log.details);
+          const match = /traceId['":\s]+([a-fA-F0-9]{32})/.exec(log.details);
           if (match) {
             genuineTraceId = match[1];
             break;
@@ -540,8 +591,19 @@ export class QueryService {
       }
     }
 
-    const neatlogsEndpoint = process.env.NEATLOGS_ENDPOINT || 'https://neatlogs.com';
-    const traceUrl = genuineTraceId ? `${neatlogsEndpoint}/app/traces/${genuineTraceId}` : null;
+    // Format neatlogs URL strictly if genuine 32-character hex traceId and valid HTTPS endpoint
+    let traceUrl: string | null = null;
+    if (genuineTraceId && /^[0-9a-f]{32}$/i.test(genuineTraceId)) {
+      try {
+        const ep = process.env.NEATLOGS_ENDPOINT || 'https://neatlogs.com';
+        const parsedUrl = new URL(ep);
+        if (parsedUrl.protocol === 'https:') {
+          traceUrl = `${parsedUrl.origin}/app/traces/${genuineTraceId}`;
+        }
+      } catch {
+        traceUrl = null;
+      }
+    }
 
     return {
       incident: {
@@ -597,6 +659,7 @@ export class QueryService {
         : null,
       paymentEvents: pEvents.map((e) => ({
         id: e.id,
+        paymentReference: e.paymentReference,
         eventType: e.eventType,
         status: e.status,
         amount: e.amount,

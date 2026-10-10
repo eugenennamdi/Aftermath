@@ -1,18 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { isOperatorAuthenticated, validateCsrfOrOrigin } from '@/lib/auth';
+import {
+  isOperatorAuthenticated,
+  isWorkerCronAuthorized,
+  validateCsrfOrOrigin,
+} from '@/lib/auth';
 import { RecoveryWorker } from '@/worker/recovery-worker';
 
 export async function POST(req: NextRequest) {
   try {
-    if (!validateCsrfOrOrigin(req)) {
-      return NextResponse.json({ error: 'Untrusted origin' }, { status: 403 });
-    }
+    const isCron = isWorkerCronAuthorized(req);
+    const isOperator = isOperatorAuthenticated(req);
 
-    if (!isOperatorAuthenticated(req)) {
+    if (!isCron && !isOperator) {
       return NextResponse.json(
-        { error: 'Unauthorized: Operator session required' },
+        { error: 'Unauthorized: Operator session or valid CRON_SECRET required' },
         { status: 401 }
       );
+    }
+
+    if (!isCron && !validateCsrfOrOrigin(req)) {
+      return NextResponse.json({ error: 'Untrusted origin' }, { status: 403 });
     }
 
     const body = await req.json().catch(() => ({}));

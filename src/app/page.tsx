@@ -74,7 +74,15 @@ export default function OperatorConsolePage() {
 
     try {
       const res = await fetch(`/api/incidents?${params.toString()}`);
-      if (!res.ok) throw new Error('Failed to fetch incidents list');
+      if (!res.ok) {
+        if (res.status === 401) {
+          setIncidents([]);
+          setIncidentsTotal(0);
+          setIncidentsError('AUTH_REQUIRED');
+          return;
+        }
+        throw new Error('Failed to fetch incidents list');
+      }
       const data = await res.json();
       setIncidents(data.incidents || []);
       setIncidentsTotal(data.total || 0);
@@ -126,6 +134,8 @@ export default function OperatorConsolePage() {
     try {
       await fetch('/api/operator/logout', { method: 'POST' });
       setIsOperator(false);
+      fetchOverview();
+      fetchIncidents();
     } catch (err) {
       console.error('Logout failed:', err);
     }
@@ -184,6 +194,8 @@ export default function OperatorConsolePage() {
               setSearchQuery(query);
               setIncidentsOffset(0);
             }}
+            isOperator={isOperator}
+            onUnlockClick={() => setIsLoginModalOpen(true)}
           />
         )}
 
@@ -212,6 +224,7 @@ export default function OperatorConsolePage() {
         onSuccess={() => {
           setIsOperator(true);
           fetchOverview();
+          fetchIncidents();
         }}
       />
 

@@ -418,8 +418,10 @@ export function IncidentDetailModal({
                             }`}
                           >
                             {data.evidenceDossier.amountMatched === 'VERIFIED'
-                              ? 'MATCH'
-                              : data.evidenceDossier.amountMatched}
+                              ? 'RECORDED MATCH'
+                              : data.evidenceDossier.amountMatched === 'MISMATCH'
+                              ? 'RECORDED MISMATCH'
+                              : 'UNRECORDED'}
                           </span>
                         </td>
                       </tr>
@@ -440,8 +442,10 @@ export function IncidentDetailModal({
                             }`}
                           >
                             {data.evidenceDossier.currencyMatched === 'VERIFIED'
-                              ? 'MATCH'
-                              : data.evidenceDossier.currencyMatched}
+                              ? 'RECORDED MATCH'
+                              : data.evidenceDossier.currencyMatched === 'MISMATCH'
+                              ? 'RECORDED MISMATCH'
+                              : 'UNRECORDED'}
                           </span>
                         </td>
                       </tr>
@@ -462,18 +466,27 @@ export function IncidentDetailModal({
                             }`}
                           >
                             {data.evidenceDossier.customerMatched === 'VERIFIED'
-                              ? 'MATCH'
-                              : data.evidenceDossier.customerMatched}
+                              ? 'RECORDED MATCH'
+                              : data.evidenceDossier.customerMatched === 'MISMATCH'
+                              ? 'RECORDED MISMATCH'
+                              : 'UNRECORDED'}
                           </span>
                         </td>
                       </tr>
                       <tr>
                         <td className="p-3 px-4 text-zinc-300">Transaction Reference</td>
                         <td className="p-3 px-4 text-zinc-200 truncate max-w-[140px]">{data.order.paymentReference}</td>
-                        <td className="p-3 px-4 text-zinc-200 truncate max-w-[140px]">{data.incident.paymentReference}</td>
+                        <td className="p-3 px-4 text-zinc-200 truncate max-w-[140px]">
+                          {data.paymentEvents.length > 0
+                            ? data.paymentEvents[0].paymentReference
+                            : data.incident.paymentReference}
+                        </td>
                         <td className="p-3 px-4 text-right">
                           <span className="inline-block px-2 py-0.5 rounded text-[10px] font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20">
-                            BOUND
+                            {data.paymentEvents.length > 0 &&
+                            data.paymentEvents[0].paymentReference === data.order.paymentReference
+                              ? 'RECORDED MATCH'
+                              : 'BOUND (Order)'}
                           </span>
                         </td>
                       </tr>
@@ -486,10 +499,16 @@ export function IncidentDetailModal({
                             className={`inline-block px-2 py-0.5 rounded text-[10px] font-semibold ${
                               data.entitlement?.isActive
                                 ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20'
+                                : data.entitlement
+                                ? 'text-cyan-400 bg-cyan-500/10 border border-cyan-500/20'
                                 : 'text-amber-400 bg-amber-500/10 border border-amber-500/20'
                             }`}
                           >
-                            {data.entitlement?.isActive ? 'CONFIRMED' : 'PROVISIONED'}
+                            {data.entitlement?.isActive
+                              ? 'CONFIRMED ACTIVE'
+                              : data.entitlement
+                              ? 'PROVISIONED'
+                              : 'NOT FOUND'}
                           </span>
                         </td>
                       </tr>

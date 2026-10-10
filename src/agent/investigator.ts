@@ -253,8 +253,9 @@ export async function investigateIncident(
   paymentReference: string,
   options?: InvestigationOptions
 ): Promise<InvestigationResult> {
-  const providerConfig = process.env.INVESTIGATOR_PROVIDER || 'litellm_sonnet';
-  const isGeminiRollback = providerConfig === 'gemini';
+  // Strictly enforce sponsored LiteLLM Sonnet in production. Gemini rollback only allowed in non-production if explicitly configured.
+  const isGeminiRollback =
+    process.env.INVESTIGATOR_PROVIDER === 'gemini' && process.env.NODE_ENV !== 'production';
 
   return await trace(
     {
