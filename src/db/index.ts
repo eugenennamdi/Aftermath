@@ -1,8 +1,13 @@
+import { config } from 'dotenv';
+// Load environment variables (.env.local has precedence over .env)
+config({ path: '.env.local' });
+config({ path: '.env' });
+
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import * as schema from './schema';
 
-const connectionString = process.env.DATABASE_URL || 'postgresql://postgres:password@localhost:5432/aftermath_db';
+const connectionString = process.env.DATABASE_URL || 'postgresql://apple@localhost:5432/aftermath';
 
 // Connection client for queries
 export const queryClient = postgres(connectionString, {

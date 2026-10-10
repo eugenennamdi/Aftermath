@@ -32,14 +32,24 @@
 - **Entire Provenance:** Installed Entire CLI v0.11.4, enabled Antigravity agent integration, and attached session transcript `7b352b18-79d6-4899-b004-b68f02996652`. Generated Checkpoint ID `01M4JBBBQGYQJ784KSHCGDZ2SW`.
 - **Railway Configuration:** Created `Procfile` supporting dual web and worker processes.
 
+### Phase 1: Trusted Orders, Paystack Integration & Fulfillment Boundary (October 10, 2026)
+- **Database Schema & Migrations:** Implemented 8 production Drizzle tables (`subscription_plans`, `customers`, `orders`, `payment_events`, `entitlements`, `incidents`, `audit_logs`, `system_checks`). Generated migration `0000_absent_exodus.sql` and applied cleanly to local PostgreSQL 17 database.
+- **Authoritative Plan Catalog:** Seeded default SaaS subscription tiers (`plan_starter_monthly`, `plan_pro_monthly`) with integer minor unit pricing (500,000 kobo / 5,000 NGN).
+- **Trusted Order Creation:** Implemented `createTrustedOrder` in `src/services/order.ts`. Derives amount and currency strictly from catalog; client cannot override prices. Generates unguessable payment references.
+- **Paystack Test-Mode Client & Adapter:** Built `PaystackClient` in `src/lib/paystack.ts` supporting `initializeTransaction`, typed `verifyTransaction` (categorizing SUCCESS, PENDING, FAILED, API_ERROR, MALFORMED), and constant-time HMAC-SHA512 webhook signature verification.
+- **Secure Webhook Handler:** Built `POST /api/webhooks/paystack` with 1MB body bounds, signature verification, strict Zod schema validation, SHA-256 payload hashing, duplicate event idempotency, and transactional order status transitions.
+- **Legitimate Entitlement Service:** Built `EntitlementService` in `src/services/entitlement.ts` with database-level uniqueness enforcement, active duration calculation, and failure injection seam for Phase 2.
+- **Incident Ingestion Foundation:** Built `createOrGetIncident` and bounded pending-order reconciliation query (`getPendingOrdersForReconciliation`) in `src/services/incident.ts`.
+- **Comprehensive Vitest Suite:** 9 test files, 30 passing tests (1 skipped for live key probe). Includes real PostgreSQL concurrency test confirming 10 parallel fulfillment attempts produce strictly 1 entitlement.
+
 ## Demo
-- **Status:** Phase 0 Completed (Awaiting Phase 1 Authorization).
+- **Status:** Phase 1 Completed (Awaiting CTO Phase 2 Authorization).
 - **URL & Instructions:** To be deployed on Railway during Phase 4/5.
 
 ## Known Limitations & Next Steps
-- Full customer/order/entitlement business schema deferred to Phase 1 per acceptance gates.
-- Paystack checkout, webhook handler, and autonomous recovery agent loop deferred to Phase 1 & 2.
-- Local PostgreSQL instance not pre-installed on test host; Railway cloud connection tested via bounded client.
+- Autonomous recovery agent loop deferred to Phase 2 per acceptance gates.
+- Failure injection simulator and worker scheduler to be implemented in Phase 2 & 3.
+- Live Paystack API probe skipped until live test key configured in environment.
 
 ## Submission Requirements Checklist
 - [x] neatlogs TypeScript SDK installed and instrumented.
