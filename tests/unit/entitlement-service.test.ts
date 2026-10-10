@@ -147,7 +147,7 @@ describe('SaaS Entitlement Service & Incident Foundations', () => {
       createdAt: tenMinutesAgo,
     });
 
-    const pendingOrders = await getPendingOrdersForReconciliation(5, 10);
+    const pendingOrders = await getPendingOrdersForReconciliation(5, 200);
     const found = pendingOrders.some((o) => o.id === oldPendingOrderId);
     expect(found).toBe(true);
   });

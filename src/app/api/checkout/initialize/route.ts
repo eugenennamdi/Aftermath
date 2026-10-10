@@ -2,11 +2,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createTrustedOrder } from '@/services/order';
 
+// Explicit allowlist of plans permitted for checkout initialization in demo/test mode
+const AUTHORIZED_DEMO_PLANS = new Set([
+  'plan_starter_monthly',
+  'plan_pro_monthly',
+]);
+
 const CheckoutRequestSchema = z.object({
   planId: z.string().min(1),
   customerEmail: z.string().email(),
   customerName: z.string().optional(),
-  callbackUrl: z.string().url().optional(),
+  callbackUrl: z.string().optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -22,6 +28,16 @@ export async function POST(req: NextRequest) {
     }
 
     const { planId, customerEmail, customerName, callbackUrl } = parsed.data;
+
+    // Boundary check: ensure checkout is restricted to authorized demo/test plans
+    if (!AUTHORIZED_DEMO_PLANS.has(planId)) {
+      return NextResponse.json(
+        {
+          error: `Checkout initialization is restricted to authorized test/demo plans. Plan "${planId}" is unauthorized.`,
+        },
+        { status: 403 }
+      );
+    }
 
     const checkout = await createTrustedOrder({
       planId,

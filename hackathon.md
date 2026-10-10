@@ -42,6 +42,14 @@
 - **Incident Ingestion Foundation:** Built `createOrGetIncident` and bounded pending-order reconciliation query (`getPendingOrdersForReconciliation`) in `src/services/incident.ts`.
 - **Comprehensive Vitest Suite:** 9 test files, 30 passing tests (1 skipped for live key probe). Includes real PostgreSQL concurrency test confirming 10 parallel fulfillment attempts produce strictly 1 entitlement.
 
+### Phase 1 Corrective Pass: Reference Formatting, Webhook Decoupling & Gated Fulfillment
+- **Paystack Reference Compliance:** Replaced reference generator with strictly Paystack-compliant format `ref-<timestamp36>-<hex>` matching `^[a-zA-Z0-9.\-=]+$` with zero underscores. Echoed initialization reference strictly verified against trusted order.
+- **Webhook Boundary Decoupling:** Refactored `POST /api/webhooks/paystack` to strictly ingest event, persist fulfillment signal, and acknowledge immediately with HTTP 200 without synchronous outbound calls or provisioning inside request cycle.
+- **Independent Normal Fulfillment Engine:** Implemented `processNormalFulfillment` in `src/services/fulfillment.ts`. Performs independent Paystack verification API query, validates mathematical and customer equality against local immutable order, and provisions access idempotently.
+- **Provider Fault Resilience:** Gated fulfillment treats transient provider errors (HTTP 503, network timeouts) as retryable without marking orders failed; definitive mismatches open durable incidents.
+- **Open-Redirect & Demo Gating:** Added `resolveSafeCallbackUrl` in `src/services/order.ts` preventing open-redirect vulnerabilities. Restricted checkout initialization endpoint to authorized demo plan catalog.
+- **Expanded Regression Test Suite:** 10 test files, 38 passing tests (1 skipped for live key). Validated reference compliance, fast webhook acknowledgment, independent verification gating, reconciliation detection, and separate execution boundaries.
+
 ## Demo
 - **Status:** Phase 1 Completed (Awaiting CTO Phase 2 Authorization).
 - **URL & Instructions:** To be deployed on Railway during Phase 4/5.

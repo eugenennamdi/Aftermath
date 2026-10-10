@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
-import { eq, and, sql, lt } from 'drizzle-orm';
+import { eq, and, sql, lt, isNull } from 'drizzle-orm';
 import { db } from '../db';
-import { incidents, orders, auditLogs } from '../db/schema';
+import { incidents, orders, entitlements, auditLogs } from '../db/schema';
 
 export interface CreateIncidentParams {
   orderId: string;
@@ -84,9 +84,11 @@ export async function createOrGetIncident(params: CreateIncidentParams) {
 }
 
 /**
- * Bounded pending-order reconciliation query.
+ * 1. Bounded pending-order reconciliation query.
  * Detects orders created in the past that have remained in PENDING status
- * (e.g. dropped webhooks, closed checkout windows).
+ * (e.g. dropped webhooks, closed checkout tabs where payment succeeded).
+ * A webhook is NOT necessary for eventual discovery: sweeping these orders
+ * with Paystack transaction verification discovers completed payments directly.
  */
 export async function getPendingOrdersForReconciliation(
   olderThanMinutes: number = 5,
@@ -110,7 +112,31 @@ export async function getPendingOrdersForReconciliation(
 }
 
 /**
- * Retrieves open recovery incidents awaiting investigation.
+ * 2. Paid-but-unfulfilled orders query.
+ * Discovers orders marked PAID whose fulfillment was interrupted, crashed,
+ * or never executed, having NO active entitlement row in entitlements.
+ */
+export async function getPaidUnfulfilledOrders(limit: number = 50) {
+  const unfulfilled = await db
+    .select({
+      order: orders,
+    })
+    .from(orders)
+    .leftJoin(entitlements, eq(orders.id, entitlements.orderId))
+    .where(
+      and(
+        eq(orders.status, 'PAID'),
+        isNull(entitlements.id)
+      )
+    )
+    .orderBy(orders.updatedAt)
+    .limit(limit);
+
+  return unfulfilled.map((r) => r.order);
+}
+
+/**
+ * 3. Retrieves open recovery incidents awaiting worker investigation.
  */
 export async function getOpenIncidents(limit: number = 50) {
   return db

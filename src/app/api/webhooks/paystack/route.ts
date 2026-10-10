@@ -5,11 +5,9 @@ import { eq, and } from 'drizzle-orm';
 import { db } from '@/db';
 import { paymentEvents, orders, auditLogs } from '@/db/schema';
 import { paystackClient } from '@/lib/paystack';
-import { getOrderByReference, validateOrderPaymentBinding } from '@/services/order';
-import { entitlementService } from '@/services/entitlement';
-import { createOrGetIncident } from '@/services/incident';
+import { getOrderByReference } from '@/services/order';
 
-// Bound request payload to max 1MB to prevent memory exhaustion attacks
+// Bound request payload to max 1MB to prevent memory exhaustion
 const MAX_PAYLOAD_BYTES = 1024 * 1024;
 
 // Schema for Paystack webhook events
@@ -31,9 +29,15 @@ const PaystackWebhookSchema = z.object({
   }),
 });
 
+/**
+ * Paystack Webhook Ingestion Endpoint
+ * Gated strictly for fast, reliable ingestion & transactional persistence.
+ * Avoids synchronous provisioning or outbound API calls inside the request cycle.
+ * Acknowledges immediately with HTTP 200 upon durable event persistence.
+ */
 export async function POST(req: NextRequest) {
   try {
-    // 1. Preserve raw request bytes
+    // 1. Bound request payload size
     const arrayBuffer = await req.arrayBuffer();
     if (arrayBuffer.byteLength > MAX_PAYLOAD_BYTES) {
       return NextResponse.json(
@@ -45,7 +49,7 @@ export async function POST(req: NextRequest) {
     const rawBuffer = Buffer.from(arrayBuffer);
     const signature = req.headers.get('x-paystack-signature');
 
-    // 2. Strict HMAC-SHA512 signature validation (constant-time)
+    // 2. Strict HMAC-SHA512 constant-time signature validation
     if (!paystackClient.verifyWebhookSignature(rawBuffer, signature)) {
       return NextResponse.json(
         { error: 'Invalid or missing webhook signature' },
@@ -53,7 +57,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 3. Strict schema validation
+    // 3. Strict schema parsing
     const rawText = rawBuffer.toString('utf-8');
     let jsonBody: unknown;
     try {
@@ -72,7 +76,7 @@ export async function POST(req: NextRequest) {
 
     const { event, data } = parseResult.data;
 
-    // Filter non-payment events
+    // Filter non-payment events with instant acknowledgment
     if (event !== 'charge.success') {
       return NextResponse.json({ received: true, ignored: true, event });
     }
@@ -93,7 +97,7 @@ export async function POST(req: NextRequest) {
       .limit(1);
 
     if (existingEvent) {
-      // Event already recorded and processed
+      // Event already recorded: acknowledge immediately without re-processing side-effects
       return NextResponse.json({ received: true, duplicate: true });
     }
 
@@ -116,7 +120,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (!orderRecord) {
-      // Payment received for unknown order
+      // Payment received for unknown order: log audit and acknowledge
       await db.insert(auditLogs).values({
         id: `aud_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`,
         action: 'UNKNOWN_ORDER_PAYMENT',
@@ -126,83 +130,37 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ received: true, warning: 'Order not found' });
     }
 
-    const { order, customer } = orderRecord;
+    const { order } = orderRecord;
 
-    // 7. Validate mathematical equality & customer identity
-    const bindingCheck = validateOrderPaymentBinding(
-      { order, customer },
-      {
-        reference: data.reference,
-        amount: data.amount,
-        currency: data.currency,
-        customerEmail: data.customer.email,
-      }
-    );
-
-    if (!bindingCheck.isValid) {
-      // Order payment mismatch! Flag order as FAILED and create recovery incident
+    // 7. Persist fulfillment signal transactionally on order
+    // If order was PENDING, record PAID status and paidAt timestamp
+    if (order.status === 'PENDING') {
+      const paidAt = data.paid_at ? new Date(data.paid_at) : new Date();
       await db
         .update(orders)
         .set({
-          status: 'FAILED',
+          status: 'PAID',
+          paidAt,
           updatedAt: new Date(),
         })
         .where(eq(orders.id, order.id));
-
-      await createOrGetIncident({
-        orderId: order.id,
-        paymentReference: data.reference,
-        customerId: customer.id,
-        reason: 'VERIFICATION_MISMATCH',
-        errorDetail: bindingCheck.mismatchReason,
-      });
-
-      return NextResponse.json({
-        received: true,
-        action: 'INCIDENT_CREATED',
-        reason: 'VERIFICATION_MISMATCH',
-      });
     }
 
-    // 8. Validated payment: update order to PAID
-    const paidAt = data.paid_at ? new Date(data.paid_at) : new Date();
-    await db
-      .update(orders)
-      .set({
-        status: 'PAID',
-        paidAt,
-        updatedAt: new Date(),
-      })
-      .where(eq(orders.id, order.id));
-
-    // 9. Execute normal fulfillment path (synchronous, NO AI in webhook)
-    const provisionResult = await entitlementService.provisionEntitlement(
-      order.id,
-      data.reference
-    );
-
-    if (provisionResult.success) {
-      return NextResponse.json({
-        received: true,
-        fulfillment: 'SUCCESS',
-        entitlementId: provisionResult.entitlement.id,
-      });
-    }
-
-    // Normal fulfillment failed (e.g. transient DB issue, temporary timeout)
-    // Create durable recovery incident for Aftermath autonomous agent
-    await createOrGetIncident({
+    await db.insert(auditLogs).values({
+      id: `aud_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`,
       orderId: order.id,
-      paymentReference: data.reference,
-      customerId: customer.id,
-      reason: 'FULFILLMENT_FAILED',
-      errorDetail: provisionResult.error,
+      action: 'WEBHOOK_INGESTED',
+      actor: 'WEBHOOK',
+      details: `Payment event ingested for order ${order.id}. Awaiting independent fulfillment verification.`,
     });
 
+    // 8. Prompt acknowledgment: return immediately with HTTP 200
+    // NO synchronous provisioning or outbound API calls inside the request
     return NextResponse.json({
       received: true,
-      fulfillment: 'FAILED',
-      incidentCreated: true,
+      acknowledged: true,
+      orderId: order.id,
+      reference: data.reference,
     });
   } catch (err) {
     const errorMsg = (err as Error).message || String(err);

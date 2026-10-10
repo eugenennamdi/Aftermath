@@ -3,10 +3,11 @@ import crypto from 'node:crypto';
 import { NextRequest } from 'next/server';
 import { POST } from '@/app/api/webhooks/paystack/route';
 import { db } from '@/db';
-import { customers, orders, paymentEvents, entitlements, incidents } from '@/db/schema';
+import { customers, orders, paymentEvents, entitlements } from '@/db/schema';
 import { eq } from 'drizzle-orm';
+import { generatePaystackReference } from '@/lib/paystack';
 
-describe('Paystack Webhook Handler Security & Processing', () => {
+describe('Paystack Webhook Handler Security & Fast Ingestion Boundary', () => {
   const secretKey = 'sk_test_mock_webhook_secret_key';
   let customerEmail: string;
   let customerId: string;
@@ -16,10 +17,10 @@ describe('Paystack Webhook Handler Security & Processing', () => {
   beforeEach(async () => {
     process.env.PAYSTACK_SECRET_KEY = secretKey;
 
-    customerEmail = `hook_${Date.now()}@example.com`;
-    customerId = `cus_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
-    orderId = `ord_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
-    reference = `ref_hook_${Date.now()}`;
+    customerEmail = `hook-${Date.now()}@example.com`;
+    customerId = `cus-${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
+    orderId = `ord-${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
+    reference = generatePaystackReference();
 
     await db.insert(customers).values({
       id: customerId,
@@ -59,7 +60,7 @@ describe('Paystack Webhook Handler Security & Processing', () => {
     const raw = JSON.stringify({ event: 'charge.success', data: { reference } });
     const req = new NextRequest('http://localhost:3000/api/webhooks/paystack', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' }, // No signature header!
+      headers: { 'content-type': 'application/json' },
       body: raw,
     });
 
@@ -96,7 +97,7 @@ describe('Paystack Webhook Handler Security & Processing', () => {
     expect(res.status).toBe(400);
   });
 
-  it('successfully processes valid charge.success, updates order, and provisions entitlement', async () => {
+  it('fast acknowledgment: ingests valid charge.success, records payment, and acknowledges promptly without synchronous fulfillment (Regression Check 3)', async () => {
     const req = createSignedRequest({
       event: 'charge.success',
       data: {
@@ -113,19 +114,23 @@ describe('Paystack Webhook Handler Security & Processing', () => {
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.received).toBe(true);
-    expect(json.fulfillment).toBe('SUCCESS');
+    expect(json.acknowledged).toBe(true);
+    expect(json.orderId).toBe(orderId);
 
-    // Verify order updated to FULFILLED
+    // Verify order updated to PAID (fulfillment signal persisted)
     const [order] = await db.select().from(orders).where(eq(orders.id, orderId));
-    expect(order.status).toBe('FULFILLED');
+    expect(order.status).toBe('PAID');
 
-    // Verify entitlement created
-    const [entitlement] = await db.select().from(entitlements).where(eq(entitlements.orderId, orderId));
-    expect(entitlement).toBeDefined();
-    expect(entitlement.sourceReference).toBe(reference);
+    // IMPORTANT: Verify that the webhook DID NOT synchronously provision entitlements inside the HTTP request!
+    // Entitlement provisioning must execute independently via the fulfillment engine
+    const activeEntitlements = await db
+      .select()
+      .from(entitlements)
+      .where(eq(entitlements.orderId, orderId));
+    expect(activeEntitlements.length).toBe(0);
   });
 
-  it('guarantees duplicate webhook deliveries are idempotent and do not create duplicate records (Requirement 7)', async () => {
+  it('guarantees duplicate webhook deliveries are idempotent and do not create duplicate records (Requirement 7 & Regression Check 9)', async () => {
     const payload = {
       event: 'charge.success',
       data: {
@@ -143,7 +148,8 @@ describe('Paystack Webhook Handler Security & Processing', () => {
     const res1 = await POST(req1);
     expect(res1.status).toBe(200);
     const json1 = await res1.json();
-    expect(json1.fulfillment).toBe('SUCCESS');
+    expect(json1.received).toBe(true);
+    expect(json1.duplicate).toBeUndefined();
 
     // Second delivery (Paystack webhook retry)
     const req2 = createSignedRequest(payload);
@@ -155,41 +161,5 @@ describe('Paystack Webhook Handler Security & Processing', () => {
     // Verify only ONE payment event exists
     const events = await db.select().from(paymentEvents).where(eq(paymentEvents.paymentReference, reference));
     expect(events.length).toBe(1);
-
-    // Verify only ONE entitlement exists
-    const userEntitlements = await db.select().from(entitlements).where(eq(entitlements.orderId, orderId));
-    expect(userEntitlements.length).toBe(1);
-  });
-
-  it('detects amount mismatch and triggers recovery incident instead of granting access', async () => {
-    const mismatchReq = createSignedRequest({
-      event: 'charge.success',
-      data: {
-        reference,
-        amount: 200000, // Expected 500000, received 200000
-        currency: 'NGN',
-        status: 'success',
-        customer: { email: customerEmail },
-      },
-    });
-
-    const res = await mismatchReq ? await POST(mismatchReq) : null;
-    expect(res?.status).toBe(200);
-    const json = await res?.json();
-    expect(json.action).toBe('INCIDENT_CREATED');
-    expect(json.reason).toBe('VERIFICATION_MISMATCH');
-
-    // Verify order marked FAILED
-    const [order] = await db.select().from(orders).where(eq(orders.id, orderId));
-    expect(order.status).toBe('FAILED');
-
-    // Verify incident opened
-    const [incident] = await db.select().from(incidents).where(eq(incidents.orderId, orderId));
-    expect(incident).toBeDefined();
-    expect(incident.reason).toBe('VERIFICATION_MISMATCH');
-
-    // Verify NO entitlement created
-    const userEntitlements = await db.select().from(entitlements).where(eq(entitlements.orderId, orderId));
-    expect(userEntitlements.length).toBe(0);
   });
 });

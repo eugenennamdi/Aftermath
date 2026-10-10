@@ -53,6 +53,26 @@ export type PaystackVerificationOutcome =
     };
 
 /**
+ * Generates a cryptographically unpredictable reference compatible with Paystack format.
+ * Paystack permits alphanumeric characters, hyphens, periods, and equals signs: ^[a-zA-Z0-9.\-=]+$
+ * Format: ref-<timestamp36>-<16-char-entropy> (contains strictly alphanumeric and hyphens; zero underscores)
+ */
+export function generatePaystackReference(): string {
+  const timestamp = Date.now().toString(36);
+  const entropy = crypto.randomBytes(8).toString('hex');
+  return `ref-${timestamp}-${entropy}`;
+}
+
+/**
+ * Validates whether a reference conforms to Paystack format requirements.
+ */
+export function isValidPaystackReference(reference: string): boolean {
+  if (!reference || typeof reference !== 'string') return false;
+  if (reference.length < 4 || reference.length > 100) return false;
+  return /^[a-zA-Z0-9.\-=]+$/.test(reference);
+}
+
+/**
  * Paystack API Client & Verification Adapter
  * Server-only module; guarantees PAYSTACK_SECRET_KEY never leaves server environment.
  */

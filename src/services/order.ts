@@ -2,7 +2,12 @@ import crypto from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { db } from '../db';
 import { subscriptionPlans, customers, orders, auditLogs } from '../db/schema';
-import { paystackClient, PaystackClient } from '../lib/paystack';
+import {
+  paystackClient,
+  PaystackClient,
+  generatePaystackReference,
+  isValidPaystackReference,
+} from '../lib/paystack';
 
 export interface CreateOrderParams {
   planId: string;
@@ -37,6 +42,45 @@ export interface OrderValidationResult {
     currency: string;
     email: string;
   };
+}
+
+/**
+ * Validates and resolves client-provided callback URLs against an authorized server origin.
+ * Prevents arbitrary open-redirect attacks or exfiltration to attacker-controlled domains.
+ */
+export function resolveSafeCallbackUrl(clientCallbackUrl?: string): string {
+  const defaultBase = process.env.APP_BASE_URL || 'http://localhost:3000';
+  const defaultCallback = `${defaultBase.replace(/\/$/, '')}/checkout/complete`;
+
+  if (!clientCallbackUrl) {
+    return defaultCallback;
+  }
+
+  // Handle relative path safely
+  if (clientCallbackUrl.startsWith('/')) {
+    return `${defaultBase.replace(/\/$/, '')}${clientCallbackUrl}`;
+  }
+
+  try {
+    const parsed = new URL(clientCallbackUrl);
+    const appBase = new URL(defaultBase);
+
+    // Explicit allowlist: same origin or designated localhost test ports
+    const allowedHosts = new Set([
+      appBase.host,
+      'localhost:3000',
+      '127.0.0.1:3000',
+    ]);
+
+    if (allowedHosts.has(parsed.host)) {
+      return parsed.toString();
+    }
+
+    // Untrusted domain supplied: fall back to safe default callback
+    return defaultCallback;
+  } catch {
+    return defaultCallback;
+  }
 }
 
 /**
@@ -86,8 +130,11 @@ export async function createTrustedOrder(
     customer = createdCustomer;
   }
 
-  // 3. Cryptographic unguessable payment reference
-  const paymentReference = `ref_${Date.now()}_${crypto.randomBytes(8).toString('hex')}`;
+  // 3. Cryptographically unpredictable, Paystack-compatible reference (alphanumeric & hyphens, NO underscores)
+  const paymentReference = generatePaystackReference();
+  if (!isValidPaystackReference(paymentReference)) {
+    throw new Error(`Generated reference "${paymentReference}" violates Paystack reference constraints.`);
+  }
   const orderId = `ord_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
 
   // 4. Insert order with PENDING status
@@ -119,18 +166,26 @@ export async function createTrustedOrder(
 
   // 5. Initialize Paystack test-mode transaction if client is configured
   if (client.hasSecretKey()) {
+    const safeCallback = resolveSafeCallbackUrl(params.callbackUrl);
     try {
       const initRes = await client.initializeTransaction({
         reference: paymentReference,
         amount: plan.amount,
         email: customer.email,
-        callbackUrl: params.callbackUrl,
+        callbackUrl: safeCallback,
         metadata: {
           order_id: createdOrder.id,
           plan_id: plan.id,
           customer_id: customer.id,
         },
       });
+
+      // Strict validation: echoed reference must match local order reference exactly
+      if (initRes.reference !== paymentReference) {
+        throw new Error(
+          `Paystack initialization reference mismatch: expected "${paymentReference}", received "${initRes.reference}".`
+        );
+      }
 
       authorizationUrl = initRes.authorizationUrl;
       accessCode = initRes.accessCode;
