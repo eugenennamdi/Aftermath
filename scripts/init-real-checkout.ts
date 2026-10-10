@@ -6,7 +6,14 @@ import { eq } from 'drizzle-orm';
 
 async function main() {
   const args = process.argv.slice(2);
-  const caseArg = args.find((a, i) => a === '--case' ? args[i + 1] : a.startsWith('--case=') ? a.split('=')[1] : null) || '1';
+  const getArg = (name: string): string | null => {
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] === `--${name}` && args[i + 1]) return args[i + 1];
+      if (args[i].startsWith(`--${name}=`)) return args[i].split('=')[1];
+    }
+    return null;
+  };
+  const caseArg = getArg('case') || '1';
   const caseNum = parseInt(caseArg, 10);
 
   console.log('================================================================================');
