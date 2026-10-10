@@ -231,9 +231,77 @@ export function isWorkerCronAuthorized(req: NextRequest): boolean {
   return crypto.timingSafeEqual(inputBuffer, expectedBuffer);
 }
 
+// In-memory rate limiting map for checkout initialization per IP: ip -> { count, resetAt }
+const checkoutAttemptMap = new Map<string, { count: number; resetAt: number }>();
+const MAX_CHECKOUT_ATTEMPTS = 10;
+const CHECKOUT_RATE_WINDOW_MS = 60 * 1000; // 60 seconds
+
+/**
+ * Checks in-memory rate limiting for checkout initialization per IP.
+ */
+export function checkCheckoutRateLimit(clientIp: string): { allowed: boolean; retryAfterSeconds?: number } {
+  const now = Date.now();
+  const record = checkoutAttemptMap.get(clientIp);
+
+  if (!record || now > record.resetAt) {
+    checkoutAttemptMap.set(clientIp, { count: 1, resetAt: now + CHECKOUT_RATE_WINDOW_MS });
+    return { allowed: true };
+  }
+
+  if (record.count >= MAX_CHECKOUT_ATTEMPTS) {
+    const retryAfter = Math.ceil((record.resetAt - now) / 1000);
+    return { allowed: false, retryAfterSeconds: Math.max(retryAfter, 1) };
+  }
+
+  record.count += 1;
+  return { allowed: true };
+}
+
+/**
+ * Resets checkout rate limits (used in testing).
+ */
+export function resetCheckoutRateLimits(): void {
+  checkoutAttemptMap.clear();
+}
+
+/**
+ * Checks if the incoming request has a valid test checkout authorization header.
+ * Accepts x-checkout-secret or Bearer token matching CRON_SECRET or OPERATOR_SECRET.
+ */
+export function isTestCheckoutAuthorized(req: NextRequest): boolean {
+  const authHeader = req.headers.get('authorization');
+  const xCheckoutHeader = req.headers.get('x-checkout-secret');
+
+  let candidate: string | null = null;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    candidate = authHeader.slice(7).trim();
+  } else if (xCheckoutHeader) {
+    candidate = xCheckoutHeader.trim();
+  }
+
+  if (!candidate) return false;
+
+  const validSecrets = [getOperatorSecret(), getCronSecret()].filter(
+    (s): s is string => typeof s === 'string' && s.length >= MIN_OPERATOR_SECRET_LENGTH
+  );
+
+  if (validSecrets.length === 0) return false;
+
+  const candBuf = Buffer.from(candidate);
+  for (const secret of validSecrets) {
+    const secBuf = Buffer.from(secret);
+    if (candBuf.length === secBuf.length && crypto.timingSafeEqual(candBuf, secBuf)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 /**
  * Derives the explicit set of trusted origins from environment.
  * Matches scheme, host, and port exactly.
+ * In production (NODE_ENV === 'production'), FAILS CLOSED if no origin is configured.
  */
 export function getTrustedOrigins(): Set<string> {
   const origins = new Set<string>();
@@ -261,8 +329,8 @@ export function getTrustedOrigins(): Set<string> {
     }
   }
 
-  // Default to standard local host origins if none explicitly provided
-  if (origins.size === 0) {
+  // Default to standard local host origins ONLY in non-production mode
+  if (origins.size === 0 && process.env.NODE_ENV !== 'production') {
     origins.add('http://localhost:3000');
     origins.add('http://127.0.0.1:3000');
   }
@@ -274,14 +342,20 @@ export function getTrustedOrigins(): Set<string> {
  * Validates request origin for state-mutating requests to prevent CSRF.
  * Strictly checks Origin against APP_URL / TRUSTED_ORIGINS.
  * REJECTS arbitrary Host header matching to prevent host spoofing and cross-port attacks.
+ * Fails closed when no trusted origin is configured in production.
+ * Requires strict configured-origin validation for cookie-authenticated browser mutations.
  */
 export function validateCsrfOrOrigin(req: NextRequest): boolean {
   // Safe HTTP read methods
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return true;
 
-  const origin = req.headers.get('origin');
   const trustedOrigins = getTrustedOrigins();
+  if (trustedOrigins.size === 0) {
+    // Fail closed when no trusted origin is configured
+    return false;
+  }
 
+  const origin = req.headers.get('origin');
   if (origin) {
     try {
       const originUrl = new URL(origin);
@@ -292,14 +366,7 @@ export function validateCsrfOrOrigin(req: NextRequest): boolean {
     }
   }
 
-  // If no Origin header (e.g. server-to-server or test requests):
-  // Inspect Sec-Fetch-Site to block cross-site browser requests that omit Origin
-  const secFetchSite = req.headers.get('sec-fetch-site');
-  if (secFetchSite && secFetchSite === 'cross-site') {
-    return false;
-  }
-
-  // Inspect Referer header if present
+  // If no Origin header, inspect Referer header if present
   const referer = req.headers.get('referer');
   if (referer) {
     try {
@@ -310,9 +377,20 @@ export function validateCsrfOrOrigin(req: NextRequest): boolean {
     }
   }
 
-  // For requests without Origin or Referer:
-  // Allow only if caller provides valid operator session, valid CRON_SECRET, or running in test environment
-  if (isOperatorAuthenticated(req) || isWorkerCronAuthorized(req) || process.env.NODE_ENV === 'test') {
+  // Strict: browser requests authenticated via operator session cookie MUST provide an Origin/Referer.
+  // Missing-Origin browser mutations with operator cookies are strictly rejected to prevent CSRF.
+  const hasOperatorCookie = Boolean(req.cookies.get(OPERATOR_COOKIE_NAME)?.value);
+  if (hasOperatorCookie) {
+    return false;
+  }
+
+  // Server-to-server requests without browser cookies must use an explicitly separate authorization method
+  if (isWorkerCronAuthorized(req) || isTestCheckoutAuthorized(req)) {
+    return true;
+  }
+
+  // In non-production test environment only: allow server-side synthetic test mutations if no cookie
+  if (process.env.NODE_ENV === 'test') {
     return true;
   }
 

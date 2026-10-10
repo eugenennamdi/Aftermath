@@ -525,7 +525,19 @@ export function IncidentDetailModal({
                         neatlogs Telemetry Trace
                       </span>
                     </div>
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-900 text-zinc-400 border border-zinc-800">
+                    <span
+                      className={`text-[10px] font-mono px-2 py-0.5 rounded ${
+                        data.evidenceDossier.paymentVerificationState === 'PROVIDER_VERIFIED'
+                          ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-500/30'
+                          : data.evidenceDossier.paymentVerificationState === 'WEBHOOK_OBSERVED'
+                          ? 'bg-sky-950/60 text-sky-400 border border-sky-500/30'
+                          : data.evidenceDossier.paymentVerificationState === 'SIMULATED_FIXTURE'
+                          ? 'bg-purple-950/60 text-purple-400 border border-purple-500/30'
+                          : data.evidenceDossier.paymentVerificationState === 'VERIFICATION_FAILED'
+                          ? 'bg-rose-950/60 text-rose-400 border border-rose-500/30'
+                          : 'bg-zinc-900 text-zinc-400 border border-zinc-800'
+                      }`}
+                    >
                       {data.evidenceDossier.paymentVerificationState}
                     </span>
                   </div>

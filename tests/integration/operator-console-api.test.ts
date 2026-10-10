@@ -17,8 +17,13 @@ import { GET as getIncidentsListRoute } from '@/app/api/incidents/route';
 import { GET as getOverviewRoute } from '@/app/api/incidents/overview/route';
 import { POST as runScenarioRoute } from '@/app/api/scenarios/run/route';
 import { POST as workerTickRoute } from '@/app/api/worker/tick/route';
+import { POST as checkoutInitializeRoute } from '@/app/api/checkout/initialize/route';
 import { paymentEvents } from '@/db/schema';
-import { validateCsrfOrOrigin, isWorkerCronAuthorized } from '@/lib/auth';
+import {
+  validateCsrfOrOrigin,
+  isWorkerCronAuthorized,
+  resetCheckoutRateLimits,
+} from '@/lib/auth';
 
 describe('Phase 3 Operator Console: Authoritative Query Layer, Security & Scenario Execution', () => {
   let customerId: string;
@@ -261,6 +266,139 @@ describe('Phase 3 Operator Console: Authoritative Query Layer, Security & Scenar
       });
       expect(validateCsrfOrOrigin(spoofedHostReq)).toBe(false);
     });
+
+    it('enforces strict CSRF behavior: blocks cookie-authenticated mutations missing Origin and fails closed in production', () => {
+      const token = createOperatorSessionToken();
+
+      // 1. Cookie-authenticated mutation missing Origin and Referer -> strictly false (prevents CSRF)
+      const cookieNoOriginReq = new NextRequest('http://localhost:3000/api/checkout/initialize', {
+        method: 'POST',
+        headers: {
+          cookie: `aftermath_operator_session=${token}`,
+        },
+      });
+      expect(validateCsrfOrOrigin(cookieNoOriginReq)).toBe(false);
+
+      // 2. Cookie-authenticated mutation with untrusted cross-site origin -> false
+      const cookieEvilOriginReq = new NextRequest('http://localhost:3000/api/checkout/initialize', {
+        method: 'POST',
+        headers: {
+          cookie: `aftermath_operator_session=${token}`,
+          origin: 'http://evil-attacker.com',
+        },
+      });
+      expect(validateCsrfOrOrigin(cookieEvilOriginReq)).toBe(false);
+
+      // 3. Fails closed in production when no trusted origins are configured
+      const originalEnv = process.env.NODE_ENV;
+      const originalAppUrl = process.env.APP_URL;
+      const originalTrusted = process.env.TRUSTED_ORIGINS;
+
+      try {
+        (process.env as Record<string, string | undefined>).NODE_ENV = 'production';
+        delete process.env.APP_URL;
+        delete process.env.TRUSTED_ORIGINS;
+
+        const prodReq = new NextRequest('http://localhost:3000/api/checkout/initialize', {
+          method: 'POST',
+          headers: { origin: 'http://localhost:3000' },
+        });
+        // In production without APP_URL, trusted origins list is empty -> fails closed
+        expect(validateCsrfOrOrigin(prodReq)).toBe(false);
+      } finally {
+        (process.env as Record<string, string | undefined>).NODE_ENV = originalEnv;
+        if (originalAppUrl) process.env.APP_URL = originalAppUrl;
+        if (originalTrusted) process.env.TRUSTED_ORIGINS = originalTrusted;
+      }
+    });
+
+    it('enforces operator auth, rate limiting and plan allowlist on POST /api/checkout/initialize', async () => {
+      resetCheckoutRateLimits();
+
+      // 1. Unauthenticated request without session or checkout secret -> 401
+      const unauthReq = new NextRequest('http://localhost:3000/api/checkout/initialize', {
+        method: 'POST',
+        headers: {
+          origin: 'http://localhost:3000',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          planId: 'plan_starter_monthly',
+          customerEmail: 'checkout-test@example.com',
+        }),
+      });
+      const unauthRes = await checkoutInitializeRoute(unauthReq);
+      expect(unauthRes.status).toBe(401);
+
+      // 2. Untrusted origin -> 403
+      const token = createOperatorSessionToken();
+      const untrustedReq = new NextRequest('http://localhost:3000/api/checkout/initialize', {
+        method: 'POST',
+        headers: {
+          origin: 'http://evil.com',
+          cookie: `aftermath_operator_session=${token}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          planId: 'plan_starter_monthly',
+          customerEmail: 'checkout-test@example.com',
+        }),
+      });
+      const untrustedRes = await checkoutInitializeRoute(untrustedReq);
+      expect(untrustedRes.status).toBe(403);
+
+      // 3. Unauthorized plan -> 403
+      const invalidPlanReq = new NextRequest('http://localhost:3000/api/checkout/initialize', {
+        method: 'POST',
+        headers: {
+          origin: 'http://localhost:3000',
+          cookie: `aftermath_operator_session=${token}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          planId: 'unauthorized_enterprise_plan',
+          customerEmail: 'checkout-test@example.com',
+        }),
+      });
+      const invalidPlanRes = await checkoutInitializeRoute(invalidPlanReq);
+      expect(invalidPlanRes.status).toBe(403);
+
+      // 4. Authenticated operator session creates trusted order -> 200
+      const authReq = new NextRequest('http://localhost:3000/api/checkout/initialize', {
+        method: 'POST',
+        headers: {
+          origin: 'http://localhost:3000',
+          cookie: `aftermath_operator_session=${token}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          planId: 'plan_starter_monthly',
+          customerEmail: 'checkout-test@example.com',
+        }),
+      });
+      const authRes = await checkoutInitializeRoute(authReq);
+      expect(authRes.status).toBe(200);
+      const authData = await authRes.json();
+      expect(authData.success).toBe(true);
+      expect(authData.order.id).toBeDefined();
+      expect(authData.order.paymentReference).toBeDefined();
+
+      // 5. Server-to-server request with x-checkout-secret -> 200
+      const serverReq = new NextRequest('http://localhost:3000/api/checkout/initialize', {
+        method: 'POST',
+        headers: {
+          origin: 'http://localhost:3000',
+          'x-checkout-secret': process.env.OPERATOR_SECRET!,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          planId: 'plan_pro_monthly',
+          customerEmail: 'server-checkout@example.com',
+        }),
+      });
+      const serverRes = await checkoutInitializeRoute(serverReq);
+      expect(serverRes.status).toBe(200);
+    });
   });
 
   describe('2. PII Sanitization & Data Redaction', () => {
@@ -337,7 +475,7 @@ describe('Phase 3 Operator Console: Authoritative Query Layer, Security & Scenar
       expect(detailUnverified?.evidenceDossier.amountVerified).toBeNull();
       expect(detailUnverified?.neatlogsTrace.traceUrl).toBeNull();
 
-      // 2. Insert authoritative paymentEvents record: verify provider verification provenance
+      // 2. Insert authoritative paymentEvents record: signed webhook observed (awaiting independent verification)
       await db.insert(paymentEvents).values({
         id: `pe_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`,
         orderId,
@@ -351,15 +489,27 @@ describe('Phase 3 Operator Console: Authoritative Query Layer, Security & Scenar
         gatewayResponse: 'Successful',
       });
 
-      // 3. Insert audit log with valid 32-character hex traceId
+      const detailWebhook = await queryService.getIncidentDetail(incId);
+      expect(detailWebhook?.evidenceDossier.paymentVerificationState).toBe('WEBHOOK_OBSERVED');
+      expect(detailWebhook?.evidenceDossier.amountMatched).toBe('VERIFIED');
+      expect(detailWebhook?.evidenceDossier.amountVerified).toBe(500000);
+
+      // 3. Insert audit log with actual independent provider verification response and valid traceId
       const validTraceId = 'a1b2c3d4e5f60718293a4b5c6d7e8f90';
       await db.insert(auditLogs).values({
         id: `log_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`,
         incidentId: incId,
         orderId,
-        action: 'INVESTIGATION_STARTED',
-        actor: 'recovery_agent',
-        details: JSON.stringify({ traceId: validTraceId }),
+        action: 'PAYSTACK_VERIFIED',
+        actor: 'paystack_adapter',
+        details: JSON.stringify({
+          reference,
+          outcome: 'SUCCESS',
+          amount: 500000,
+          currency: 'NGN',
+          customerEmail,
+          traceId: validTraceId,
+        }),
       });
 
       const detailVerified = await queryService.getIncidentDetail(incId);

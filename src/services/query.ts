@@ -27,6 +27,7 @@ export function redactEmail(email: string | null | undefined): string {
 export type MatchStatus = 'VERIFIED' | 'MISMATCH' | 'UNKNOWN' | 'NOT_APPLICABLE';
 export type PaymentVerificationState =
   | 'PROVIDER_VERIFIED'
+  | 'WEBHOOK_OBSERVED'
   | 'SIMULATED_FIXTURE'
   | 'VERIFICATION_FAILED'
   | 'UNVERIFIED';
@@ -469,20 +470,29 @@ export class QueryService {
     if (isSimulated) {
       paymentVerificationState = 'SIMULATED_FIXTURE';
     } else {
-      const hasChargeSuccess = pEvents.some(
-        (e) => e.status === 'success' && e.eventType === 'charge.success'
-      );
-      const hasChargeFailed = pEvents.some((e) => e.status === 'failed');
       const hasLiveProviderVerification = logs.some(
         (l) =>
           (l.action === 'PAYSTACK_VERIFIED' || l.action === 'PAYMENT_VERIFIED') &&
           l.actor === 'paystack_adapter'
       );
+      const hasFailedProviderVerification = logs.some(
+        (l) =>
+          (l.action === 'PAYSTACK_VERIFICATION_FAILED' || l.action === 'PAYMENT_VERIFICATION_FAILED') &&
+          l.actor === 'paystack_adapter'
+      );
+      const hasChargeSuccess = pEvents.some(
+        (e) => e.status === 'success' && e.eventType === 'charge.success'
+      );
+      const hasChargeFailed = pEvents.some((e) => e.status === 'failed');
 
-      if (hasChargeSuccess || hasLiveProviderVerification) {
+      if (hasLiveProviderVerification) {
+        // Authoritative independent verification response persisted
         paymentVerificationState = 'PROVIDER_VERIFIED';
-      } else if (hasChargeFailed) {
+      } else if (hasFailedProviderVerification || hasChargeFailed) {
         paymentVerificationState = 'VERIFICATION_FAILED';
+      } else if (hasChargeSuccess) {
+        // Signed webhook observed, awaiting independent transaction verification
+        paymentVerificationState = 'WEBHOOK_OBSERVED';
       } else {
         paymentVerificationState = 'UNVERIFIED';
       }
@@ -501,7 +511,51 @@ export class QueryService {
     let customerVerified: string | null = null;
     let customerMatched: MatchStatus = 'UNKNOWN';
 
-    if (pEvents.length > 0) {
+    // Inspect if audit logs contain explicit recorded verification details from adapter
+    const verificationLog = logs.find(
+      (l) =>
+        (l.action === 'PAYSTACK_VERIFIED' ||
+          l.action === 'PAYMENT_VERIFIED' ||
+          l.action === 'INVESTIGATION_EVIDENCE_GATHERED') &&
+        l.details
+    );
+
+    let parsedVerificationDetails: {
+      amount?: number;
+      paidAmount?: number;
+      currency?: string;
+      customerEmail?: string;
+      email?: string;
+    } | null = null;
+
+    if (verificationLog?.details) {
+      try {
+        parsedVerificationDetails = JSON.parse(verificationLog.details);
+      } catch {
+        parsedVerificationDetails = null;
+      }
+    }
+
+    if (parsedVerificationDetails && paymentVerificationState === 'PROVIDER_VERIFIED') {
+      const amt = parsedVerificationDetails.amount ?? parsedVerificationDetails.paidAmount;
+      if (typeof amt === 'number') {
+        amountVerified = amt;
+        amountMatched = amt === order.expectedAmount ? 'VERIFIED' : 'MISMATCH';
+      }
+      const curr = parsedVerificationDetails.currency;
+      if (typeof curr === 'string') {
+        currencyVerified = curr.toUpperCase();
+        currencyMatched = curr.toUpperCase() === order.currency.toUpperCase() ? 'VERIFIED' : 'MISMATCH';
+      }
+      const email = parsedVerificationDetails.customerEmail ?? parsedVerificationDetails.email;
+      if (typeof email === 'string') {
+        customerVerified = redactEmail(email);
+        customerMatched = email.toLowerCase() === customer.email.toLowerCase() ? 'VERIFIED' : 'MISMATCH';
+      }
+    }
+
+    // Fall back to paymentEvents or secondary parsed details
+    if (amountVerified === null && pEvents.length > 0) {
       const latest = pEvents[pEvents.length - 1];
       amountVerified = latest.amount;
       amountMatched = latest.amount === order.expectedAmount ? 'VERIFIED' : 'MISMATCH';
@@ -515,40 +569,24 @@ export class QueryService {
         latest.customerEmail.toLowerCase() === customer.email.toLowerCase()
           ? 'VERIFIED'
           : 'MISMATCH';
-    } else {
-      // Check if audit logs contain explicit recorded verification details from adapter
-      const verificationLog = logs.find(
-        (l) =>
-          (l.action === 'PAYSTACK_VERIFIED' ||
-            l.action === 'PAYMENT_VERIFIED' ||
-            l.action === 'INVESTIGATION_EVIDENCE_GATHERED') &&
-          l.details
-      );
-
-      if (verificationLog?.details) {
-        try {
-          const parsed = JSON.parse(verificationLog.details);
-          if (typeof parsed.paidAmount === 'number' || typeof parsed.amount === 'number') {
-            amountVerified = parsed.paidAmount ?? parsed.amount;
-            amountMatched = amountVerified === order.expectedAmount ? 'VERIFIED' : 'MISMATCH';
-          }
-          if (typeof parsed.currency === 'string') {
-            currencyVerified = parsed.currency;
-            currencyMatched =
-              parsed.currency.toUpperCase() === order.currency.toUpperCase()
-                ? 'VERIFIED'
-                : 'MISMATCH';
-          }
-          if (typeof parsed.customerEmail === 'string' || typeof parsed.email === 'string') {
-            const email = parsed.customerEmail ?? parsed.email;
-            customerVerified = redactEmail(email);
-            customerMatched =
-              email.toLowerCase() === customer.email.toLowerCase() ? 'VERIFIED' : 'MISMATCH';
-          }
-        } catch {
-          // Ignore JSON parse errors for freeform log details
-        }
+    } else if (amountVerified === null && parsedVerificationDetails) {
+      const amt = parsedVerificationDetails.amount ?? parsedVerificationDetails.paidAmount;
+      if (typeof amt === 'number') {
+        amountVerified = amt;
+        amountMatched = amt === order.expectedAmount ? 'VERIFIED' : 'MISMATCH';
       }
+      const curr = parsedVerificationDetails.currency;
+      if (typeof curr === 'string') {
+        currencyVerified = curr.toUpperCase();
+        currencyMatched = curr.toUpperCase() === order.currency.toUpperCase() ? 'VERIFIED' : 'MISMATCH';
+      }
+      const email = parsedVerificationDetails.customerEmail ?? parsedVerificationDetails.email;
+      if (typeof email === 'string') {
+        customerVerified = redactEmail(email);
+        customerMatched = email.toLowerCase() === customer.email.toLowerCase() ? 'VERIFIED' : 'MISMATCH';
+      }
+    }
+
 
       // If still UNKNOWN and incident was escalated due to an explicit mismatch:
       if (amountMatched === 'UNKNOWN' && incident.status === 'ESCALATED') {
@@ -569,7 +607,6 @@ export class QueryService {
           customerMatched = 'MISMATCH';
         }
       }
-    }
 
     // Extract genuine neatlogs trace if captured in audit logs
     let genuineTraceId: string | null = null;

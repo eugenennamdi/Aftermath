@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { db } from '../db';
 import { orders, customers, subscriptionPlans, entitlements, auditLogs } from '../db/schema';
@@ -166,6 +167,21 @@ export async function processNormalFulfillment(
       updatedAt: new Date(),
     })
     .where(eq(orders.id, order.id));
+
+  // Authoritatively record independent provider verification
+  await db.insert(auditLogs).values({
+    id: `aud_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`,
+    orderId: order.id,
+    action: 'PAYSTACK_VERIFIED',
+    actor: 'paystack_adapter',
+    details: JSON.stringify({
+      reference: verification.reference,
+      outcome: verification.outcome,
+      amount: verification.amount,
+      currency: verification.currency,
+      customerEmail: verification.customerEmail,
+    }),
+  });
 
   // 5. Grant access idempotently via EntitlementService
   const provisionResult = await entitlementService.provisionEntitlement(

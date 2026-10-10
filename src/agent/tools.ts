@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { eq, desc } from 'drizzle-orm';
 import { db } from '../db';
 import { orders, subscriptionPlans, customers, paymentEvents, entitlements, incidents, auditLogs } from '../db/schema';
@@ -218,6 +219,24 @@ export async function verifyPaystackTransaction(
             : new Date().toISOString(),
           gatewayResponse: outcome.gatewayResponse,
         };
+
+        // Persist independent verification response in audit_logs
+        try {
+          await db.insert(auditLogs).values({
+            id: `aud_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`,
+            action: 'PAYSTACK_VERIFIED',
+            actor: 'paystack_adapter',
+            details: JSON.stringify({
+              reference: outcome.reference,
+              outcome: outcome.outcome,
+              amount: outcome.amount,
+              currency: outcome.currency,
+              customerEmail: outcome.customerEmail,
+            }),
+          });
+        } catch {
+          // Non-blocking persistence
+        }
       } else if (outcome.outcome === 'API_ERROR') {
         output = {
           verified: false,
@@ -233,6 +252,23 @@ export async function verifyPaystackTransaction(
           reference: outcome.reference,
           gatewayResponse: 'gatewayResponse' in outcome ? outcome.gatewayResponse : outcome.outcome,
         };
+
+        if (outcome.outcome === 'FAILED') {
+          try {
+            await db.insert(auditLogs).values({
+              id: `aud_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`,
+              action: 'PAYSTACK_VERIFICATION_FAILED',
+              actor: 'paystack_adapter',
+              details: JSON.stringify({
+                reference: outcome.reference,
+                outcome: outcome.outcome,
+                error: 'gatewayResponse' in outcome ? outcome.gatewayResponse : 'Transaction failed',
+              }),
+            });
+          } catch {
+            // Non-blocking persistence
+          }
+        }
       }
 
       toolSpan?.setAttribute('tool.output', JSON.stringify(sanitizeTelemetryPayload(output)));
