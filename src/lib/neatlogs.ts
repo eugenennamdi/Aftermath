@@ -1,3 +1,8 @@
+import { config } from 'dotenv';
+// Load environment variables (.env.local has precedence over .env)
+config({ path: '.env.local' });
+config({ path: '.env' });
+
 import { init, trace, span, flush, log } from 'neatlogs';
 
 let isInitialized = false;
@@ -41,7 +46,7 @@ export async function initNeatlogs() {
   try {
     await init({
       apiKey,
-      endpoint: process.env.NEATLOGS_ENDPOINT || 'https://eu.ingest.neatlogs.com',
+      ...(process.env.NEATLOGS_ENDPOINT ? { endpoint: process.env.NEATLOGS_ENDPOINT } : {}),
       workflowName: process.env.NEATLOGS_WORKFLOW_NAME || 'aftermath-recovery',
     });
     isInitialized = true;
@@ -71,6 +76,9 @@ export async function runIsolatedTestWorkflow(incidentId: string = 'test_inc_001
       tags: ['phase_0_verification', 'test'],
     },
     async (workflowSpan) => {
+      const spanCtx = workflowSpan?.spanContext();
+      const traceId = spanCtx?.traceId;
+      const rootSpanId = spanCtx?.spanId;
       workflowSpan?.setAttribute('aftermath.incident_id', incidentId);
       workflowSpan?.setAttribute('aftermath.order_id', 'ord_test_999');
 
@@ -140,6 +148,8 @@ export async function runIsolatedTestWorkflow(incidentId: string = 'test_inc_001
 
       return {
         incidentId,
+        traceId,
+        rootSpanId,
         agentDecision,
         guardrailOutcome,
         status: 'VERIFIED_TEST_WORKFLOW_COMPLETE',

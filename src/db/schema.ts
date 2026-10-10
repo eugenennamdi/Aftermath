@@ -94,10 +94,17 @@ export const incidents = pgTable('incidents', {
   fencingToken: integer('fencing_token').notNull().default(0),
   leaseOwner: varchar('lease_owner', { length: 128 }),
   leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
+  retryCount: integer('retry_count').notNull().default(0),
+  nextRetryAt: timestamp('next_retry_at', { withTimezone: true }),
+  lastDecision: varchar('last_decision', { length: 64 }), // 'PROPOSE_RECOVERY' | 'RECONCILE_EXISTING' | 'RETRY_LATER' | 'ESCALATE'
+  decisionSummary: text('decision_summary'),
+  resolvedAt: timestamp('resolved_at', { withTimezone: true }),
   errorDetail: text('error_detail'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
-});
+}, (table) => [
+  index('incidents_status_retry_idx').on(table.status, table.nextRetryAt),
+]);
 
 // 7. Audit Logs (Immutable trail of state changes and recovery actions)
 export const auditLogs = pgTable('audit_logs', {

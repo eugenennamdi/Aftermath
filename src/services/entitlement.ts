@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { eq, and } from 'drizzle-orm';
 import { db } from '../db';
 import { entitlements, orders, subscriptionPlans, customers, auditLogs } from '../db/schema';
+import { faultInjector } from './fault-injector';
 
 export type ProvisionOutcome =
   | {
@@ -79,7 +80,10 @@ export class EntitlementService {
       };
     }
 
-    // Optional seam for deterministic failure injection (used in Phase 2)
+    // Server-side fault injection check (Pre-mutation)
+    faultInjector.checkPreMutation(order.id);
+
+    // Optional custom seam for deterministic failure injection
     if (options?._injectFailure) {
       try {
         options._injectFailure('PRE_INSERT');
@@ -129,6 +133,9 @@ export class EntitlementService {
           updatedAt: new Date(),
         })
         .where(eq(orders.id, order.id));
+
+      // Server-side fault injection check (Post-commit ambiguous drop)
+      faultInjector.checkPostCommit(order.id);
 
       // Record audit log
       await db.insert(auditLogs).values({

@@ -1,5 +1,4 @@
-import crypto from 'node:crypto';
-import { eq, and, sql, lt, isNull } from 'drizzle-orm';
+import { eq, and, sql, lt, isNull, desc } from 'drizzle-orm';
 import { db } from '../db';
 import { incidents, orders, entitlements, auditLogs } from '../db/schema';
 
@@ -105,7 +104,7 @@ export async function getPendingOrdersForReconciliation(
         lt(orders.createdAt, cutoffTime)
       )
     )
-    .orderBy(orders.createdAt)
+    .orderBy(desc(orders.createdAt))
     .limit(limit);
 
   return pendingList;
@@ -129,7 +128,7 @@ export async function getPaidUnfulfilledOrders(limit: number = 50) {
         isNull(entitlements.id)
       )
     )
-    .orderBy(orders.updatedAt)
+    .orderBy(desc(orders.updatedAt))
     .limit(limit);
 
   return unfulfilled.map((r) => r.order);
