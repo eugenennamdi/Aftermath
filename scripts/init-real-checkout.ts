@@ -1,7 +1,8 @@
 import crypto from 'node:crypto';
-import { db } from '../src/db';
+import { db, getSanitizedDatabaseTarget } from '../src/db';
 import { customers, orders, subscriptionPlans } from '../src/db/schema';
 import { paystackClient, generatePaystackReference } from '../src/lib/paystack';
+import { resolveSafeCallbackUrl } from '../src/services/order';
 import { eq } from 'drizzle-orm';
 
 async function main() {
@@ -18,6 +19,7 @@ async function main() {
 
   console.log('================================================================================');
   console.log(`AFTERMATH REAL PAYSTACK TEST CHECKOUT INITIALIZATION (CASE ${caseNum})`);
+  console.log(`Target Database: ${getSanitizedDatabaseTarget()}`);
   console.log('================================================================================');
 
   if (!paystackClient.hasSecretKey()) {
@@ -68,7 +70,8 @@ async function main() {
   console.log('--------------------------------------------------------------------------------');
   console.log('[Paystack] Calling Paystack initialize API in test mode...');
 
-  const callbackUrl = 'http://localhost:3000/checkout/complete';
+  const callbackUrl = resolveSafeCallbackUrl();
+  console.log(`[Paystack] Resolved Callback URL: ${callbackUrl}`);
   const initRes = await paystackClient.initializeTransaction({
     reference: paymentReference,
     amount: plan.amount,

@@ -49,7 +49,11 @@ export interface OrderValidationResult {
  * Prevents arbitrary open-redirect attacks or exfiltration to attacker-controlled domains.
  */
 export function resolveSafeCallbackUrl(clientCallbackUrl?: string): string {
-  const defaultBase = process.env.APP_BASE_URL || 'http://localhost:3000';
+  const defaultBase =
+    process.env.APP_URL ||
+    process.env.NEXT_PUBLIC_APP_URL ||
+    process.env.APP_BASE_URL ||
+    'http://localhost:3000';
   const defaultCallback = `${defaultBase.replace(/\/$/, '')}/checkout/complete`;
 
   if (!clientCallbackUrl) {
