@@ -61,6 +61,11 @@ async function runRealRecoveryWorkflow() {
 
   const worker = new RecoveryWorker({ workerId: `real_trace_worker_${Date.now()}` });
 
+  const EXECUTION_MODE = 'LIVE_GEMINI_SIMULATED_PAYSTACK';
+  console.log(`[RecoveryTrace] Execution Mode: ${EXECUTION_MODE}`);
+  console.log('[RecoveryTrace] Model Provider: Google Gemini 3.8 Flash (Live API)');
+  console.log('[RecoveryTrace] Payment Gateway: Paystack Test Mode (Simulated Success Fixture for Deterministic Order Matching)');
+
   // Claim the incident
   const claimed = await worker.claimNextIncident(incident.id);
   if (!claimed) {
@@ -69,7 +74,9 @@ async function runRealRecoveryWorkflow() {
   console.log(`[RecoveryTrace] Claimed incident ${claimed.id} with fencing token ${claimed.fencingToken}`);
 
   console.log('[RecoveryTrace] Executing recovery workflow with live Gemini 3.8 Flash model...');
-  const result = await worker.processClaimedIncident(claimed);
+  const result = await worker.processClaimedIncident(claimed, {
+    executionMode: EXECUTION_MODE,
+  });
 
   console.log('[RecoveryTrace] Recovery workflow finished:', JSON.stringify(result, null, 2));
 

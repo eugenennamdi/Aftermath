@@ -207,14 +207,13 @@ export class RecoveryService {
           };
         }
 
-        // Step 4: ATOMIC MUTATION BOUNDARY (Eliminates TOCTOU Race Condition)
-        // Re-verifies fencing token, lease ownership, AND lease expiration under row lock,
-        // then executes entitlement insert, order update, and incident update atomically.
+        // Step 4: ATOMIC PROVISIONING TRANSACTION
+        // Sets intermediate durable state 'PROVISIONED' under lease lock.
+        // Crucial invariant: does NOT transition to 'RESOLVED' until independent verification passes.
         const entitlementId = `ent_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
-        const auditId = `aud_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
+        const provisionAuditId = `aud_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
         const startedAt = new Date();
         const expiresAt = new Date(startedAt.getTime() + orderData.plan.durationDays * 24 * 60 * 60 * 1000);
-        const auditDetails = `Autonomous recovery complete. Entitlement ${entitlementId} provisioned until ${expiresAt.toISOString()}`;
 
         const mutationOutcome = await queryClient.begin(async (tx) => {
           // 1. Strict row-level verification of current lease validity at exact mutation moment
@@ -239,9 +238,16 @@ export class RecoveryService {
             );
           }
 
-          // 2. Check if entitlement already created (idempotency check inside transaction)
-          const existingEnts = await tx<Array<{ id: string; status: string }>>`
-            SELECT id, status
+          // 2. Check if entitlement already created in database
+          const existingEnts = await tx<Array<{
+            id: string;
+            customer_id: string;
+            plan_id: string;
+            source_reference: string;
+            status: string;
+            expires_at: Date;
+          }>>`
+            SELECT id, customer_id, plan_id, source_reference, status, expires_at
             FROM entitlements
             WHERE order_id = ${orderData.order.id}
             LIMIT 1
@@ -249,7 +255,21 @@ export class RecoveryService {
 
           let finalEntId = existingEnts[0]?.id;
 
-          if (!finalEntId) {
+          if (finalEntId) {
+            // Strictly validate existing record matches trusted order
+            const e = existingEnts[0];
+            if (
+              e.customer_id !== orderData.customer.id ||
+              e.plan_id !== orderData.plan.id ||
+              e.source_reference !== orderData.order.paymentReference ||
+              e.status !== 'ACTIVE' ||
+              new Date(e.expires_at).getTime() <= Date.now()
+            ) {
+              throw new Error(
+                `Existing entitlement ${finalEntId} violates integrity invariants for order ${orderData.order.id}`
+              );
+            }
+          } else {
             // 3. Atomically insert new entitlement
             const inserted = await tx<Array<{ id: string }>>`
               INSERT INTO entitlements (
@@ -269,7 +289,38 @@ export class RecoveryService {
               ON CONFLICT (order_id) DO NOTHING
               RETURNING id
             `;
-            finalEntId = inserted[0]?.id || entitlementId;
+
+            if (inserted.length > 0) {
+              finalEntId = inserted[0].id;
+            } else {
+              // Raced insert! Fetch the winning record and validate it
+              const raced = await tx<Array<{
+                id: string;
+                customer_id: string;
+                plan_id: string;
+                source_reference: string;
+                status: string;
+                expires_at: Date;
+              }>>`
+                SELECT id, customer_id, plan_id, source_reference, status, expires_at
+                FROM entitlements
+                WHERE order_id = ${orderData.order.id}
+                LIMIT 1
+              `;
+              if (
+                !raced[0] ||
+                raced[0].customer_id !== orderData.customer.id ||
+                raced[0].plan_id !== orderData.plan.id ||
+                raced[0].source_reference !== orderData.order.paymentReference ||
+                raced[0].status !== 'ACTIVE' ||
+                new Date(raced[0].expires_at).getTime() <= Date.now()
+              ) {
+                throw new Error(
+                  `Entitlement insertion was skipped on conflict but no valid record found for order ${orderData.order.id}`
+                );
+              }
+              finalEntId = raced[0].id;
+            }
           }
 
           // 4. Atomically update order to FULFILLED
@@ -279,33 +330,32 @@ export class RecoveryService {
             WHERE id = ${orderData.order.id}
           `;
 
-          // 5. Atomically update incident to RESOLVED and release lease
+          // 5. Atomically update incident to intermediate durable state 'PROVISIONED'
+          // Worker lease is preserved across the verification boundary!
           const updatedIncidents = await tx<Array<{ id: string }>>`
             UPDATE incidents
             SET
-              status = 'RESOLVED',
+              status = 'PROVISIONED',
               last_decision = 'PROPOSE_RECOVERY',
               decision_summary = ${investigation.summary},
-              resolved_at = now(),
-              updated_at = now(),
-              lease_owner = NULL,
-              lease_expires_at = NULL
+              updated_at = now()
             WHERE id = ${incidentId}
               AND fencing_token = ${fencingToken}
               AND lease_owner = ${leaseOwner}
+              AND lease_expires_at > now()
             RETURNING id
           `;
 
           if (updatedIncidents.length === 0) {
             throw new Error(
-              `Conditional incident resolution failed: lost ownership during transaction for incident ${incidentId}`
+              `Conditional incident update failed: lost ownership during transaction for incident ${incidentId}`
             );
           }
 
-          // 6. Record audit log
+          // 6. Record audit log for intermediate state
           await tx`
             INSERT INTO audit_logs (id, order_id, incident_id, action, actor, details, created_at)
-            VALUES (${auditId}, ${orderData.order.id}, ${incidentId}, 'INCIDENT_RESOLVED', 'RECOVERY_WORKER', ${auditDetails}, now())
+            VALUES (${provisionAuditId}, ${orderData.order.id}, ${incidentId}, 'ENTITLEMENT_PROVISIONED', 'RECOVERY_WORKER', ${`Entitlement ${finalEntId} provisioned; awaiting independent verification`}, now())
           `;
 
           return { entitlementId: finalEntId };
@@ -314,30 +364,86 @@ export class RecoveryService {
         // Step 5: INDEPENDENT RESOLUTION VERIFICATION
         // An incident transitions to RESOLVED only when a fresh, independent query
         // directly confirms that the customer has active access with exact matching fields.
-        const activeRecord = await entitlementService.getAuthoritativeEntitlement(
-          orderData.order.id
-        );
+        let activeRecord: Awaited<ReturnType<typeof entitlementService.getAuthoritativeEntitlement>> | null = null;
+        let verificationError: string | null = null;
 
-        if (!activeRecord) {
-          throw new Error(
-            `Independent resolution verification failed: entitlement record missing for order ${orderData.order.id}`
+        try {
+          activeRecord = await entitlementService.getAuthoritativeEntitlement(
+            orderData.order.id
           );
+
+          if (!activeRecord) {
+            verificationError = `Entitlement record missing for order ${orderData.order.id}`;
+          } else {
+            const ent = activeRecord.entitlement;
+            if (ent.id !== mutationOutcome.entitlementId) {
+              verificationError = `Entitlement ID mismatch: expected ${mutationOutcome.entitlementId}, got ${ent.id}`;
+            } else if (ent.orderId !== orderData.order.id) {
+              verificationError = `Order ID mismatch: expected ${orderData.order.id}, got ${ent.orderId}`;
+            } else if (ent.customerId !== orderData.customer.id) {
+              verificationError = `Customer ID mismatch: expected ${orderData.customer.id}, got ${ent.customerId}`;
+            } else if (ent.planId !== orderData.plan.id) {
+              verificationError = `Plan ID mismatch: expected ${orderData.plan.id}, got ${ent.planId}`;
+            } else if (ent.sourceReference !== orderData.order.paymentReference) {
+              verificationError = `Payment reference mismatch: expected ${orderData.order.paymentReference}, got ${ent.sourceReference}`;
+            } else if (ent.status !== 'ACTIVE') {
+              verificationError = `Entitlement status is ${ent.status}, expected ACTIVE`;
+            } else if (new Date(ent.expiresAt).getTime() <= Date.now()) {
+              verificationError = `Entitlement is expired (expiresAt: ${ent.expiresAt.toISOString()})`;
+            }
+          }
+        } catch (err) {
+          verificationError = `Verification query failed: ${(err as Error).message}`;
         }
 
-        // Verify exact binding invariants
-        const ent = activeRecord.entitlement;
-        if (
-          ent.orderId !== orderData.order.id ||
-          ent.customerId !== orderData.customer.id ||
-          ent.planId !== orderData.plan.id ||
-          ent.sourceReference !== orderData.order.paymentReference ||
-          ent.status !== 'ACTIVE' ||
-          new Date(ent.expiresAt).getTime() <= Date.now()
-        ) {
-          throw new Error(
-            `Independent resolution verification failed: identity mismatch or expired status on entitlement ${ent.id}`
+        // If verification failed, preserve recoverable state (schedule retry) and throw
+        if (verificationError || !activeRecord) {
+          const reason = verificationError || 'Authoritative entitlement record verification failed';
+          log('Independent verification failed for incident {incidentId}: {reason}', {
+            incidentId,
+            reason,
+          });
+
+          await this.scheduleIncidentRetry(
+            incidentId,
+            fencingToken,
+            leaseOwner,
+            `Post-provision verification failed: ${reason}`
           );
+
+          throw new Error(`Independent resolution verification failed: ${reason}`);
         }
+
+        // Step 6: CONDITIONAL RESOLUTION COMMIT
+        // Only reached if fresh authoritative verification passed completely!
+        const resolveAuditId = `aud_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
+        await queryClient.begin(async (tx) => {
+          const rows = await tx<Array<{ id: string }>>`
+            UPDATE incidents
+            SET
+              status = 'RESOLVED',
+              resolved_at = now(),
+              updated_at = now(),
+              lease_owner = NULL,
+              lease_expires_at = NULL
+            WHERE id = ${incidentId}
+              AND fencing_token = ${fencingToken}
+              AND lease_owner = ${leaseOwner}
+              AND lease_expires_at > now()
+            RETURNING id
+          `;
+
+          if (rows.length === 0) {
+            throw new Error(
+              `Worker lease preempted or expired at resolution boundary for incident ${incidentId}`
+            );
+          }
+
+          await tx`
+            INSERT INTO audit_logs (id, order_id, incident_id, action, actor, details, created_at)
+            VALUES (${resolveAuditId}, ${orderData.order.id}, ${incidentId}, 'INCIDENT_RESOLVED', 'RECOVERY_WORKER', ${`Autonomous recovery verified: Entitlement ${activeRecord.entitlement.id} confirmed ACTIVE`}, now())
+          `;
+        });
 
         log('Incident {incidentId} successfully resolved and verified independently', {
           incidentId,
@@ -356,9 +462,12 @@ export class RecoveryService {
     );
   }
 
+  public static readonly MAX_INCIDENT_RETRIES = 5;
+
   /**
    * Reconciles an incident where active entitlement was already found.
-   * Atomically verifies ownership and unexpired lease before committing.
+   * Atomically verifies exact customer, plan, reference, and unexpired access
+   * before and during commit under row lock.
    */
   public async reconcileExistingEntitlement(
     incidentId: string,
@@ -386,23 +495,71 @@ export class RecoveryService {
       throw new Error(`Worker lease expired for incident ${incidentId}`);
     }
 
-    // Fresh authoritative verification confirming exact match
+    // 1. Fetch trusted order record to verify exact binding identity
+    const [orderData] = await db
+      .select({
+        order: orders,
+        customer: customers,
+        plan: subscriptionPlans,
+      })
+      .from(orders)
+      .innerJoin(customers, eq(orders.customerId, customers.id))
+      .innerJoin(subscriptionPlans, eq(orders.planId, subscriptionPlans.id))
+      .where(eq(orders.id, incident.orderId))
+      .limit(1);
+
+    if (!orderData) {
+      throw new Error(`Cannot reconcile: trusted order record missing for ${incident.orderId}`);
+    }
+
+    // 2. Fresh authoritative verification confirming exact identity and active status
     const activeRecord = await entitlementService.getAuthoritativeEntitlement(incident.orderId);
     if (
       !activeRecord ||
       activeRecord.entitlement.orderId !== incident.orderId ||
+      activeRecord.entitlement.customerId !== orderData.customer.id ||
+      activeRecord.entitlement.planId !== orderData.plan.id ||
+      activeRecord.entitlement.sourceReference !== orderData.order.paymentReference ||
       activeRecord.entitlement.status !== 'ACTIVE' ||
       new Date(activeRecord.entitlement.expiresAt).getTime() <= Date.now()
     ) {
       throw new Error(
-        `Cannot reconcile: active entitlement not confirmed for order ${incident.orderId}`
+        `Cannot reconcile: active entitlement not confirmed or identity mismatch for order ${incident.orderId}`
       );
     }
 
     const auditId = `aud_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
 
-    // Atomic conditional update
-    const updated = await queryClient.begin(async (tx) => {
+    // 3. Atomic conditional update & commit-boundary re-validation under row lock
+    await queryClient.begin(async (tx) => {
+      // Re-validate entitlement state under row lock to avoid read/write race
+      const lockedEnts = await tx<Array<{
+        id: string;
+        customer_id: string;
+        plan_id: string;
+        source_reference: string;
+        status: string;
+        expires_at: Date;
+      }>>`
+        SELECT id, customer_id, plan_id, source_reference, status, expires_at
+        FROM entitlements
+        WHERE order_id = ${incident.orderId}
+        FOR UPDATE
+      `;
+
+      if (
+        lockedEnts.length === 0 ||
+        lockedEnts[0].customer_id !== orderData.customer.id ||
+        lockedEnts[0].plan_id !== orderData.plan.id ||
+        lockedEnts[0].source_reference !== orderData.order.paymentReference ||
+        lockedEnts[0].status !== 'ACTIVE' ||
+        new Date(lockedEnts[0].expires_at).getTime() <= Date.now()
+      ) {
+        throw new Error(
+          `Cannot reconcile: entitlement state invalid or revoked at commit boundary for order ${incident.orderId}`
+        );
+      }
+
       const rows = await tx<Array<{ id: string }>>`
         UPDATE incidents
         SET
@@ -428,8 +585,6 @@ export class RecoveryService {
         INSERT INTO audit_logs (id, order_id, incident_id, action, actor, details, created_at)
         VALUES (${auditId}, ${incident.orderId}, ${incidentId}, 'INCIDENT_RECONCILED', 'RECOVERY_WORKER', 'Incident resolved via reconciliation: existing active entitlement confirmed.', now())
       `;
-
-      return rows[0];
     });
 
     return {
@@ -444,6 +599,7 @@ export class RecoveryService {
 
   /**
    * Schedules bounded exponential retry for transient errors.
+   * Enforces finite retry limit and unexpired lease ownership.
    */
   public async scheduleIncidentRetry(
     incidentId: string,
@@ -465,7 +621,28 @@ export class RecoveryService {
 
     if (!incident) return;
 
+    if (!incident.leaseExpiresAt || new Date(incident.leaseExpiresAt).getTime() <= Date.now()) {
+      throw new Error(`Worker lease expired for incident ${incidentId}`);
+    }
+
     const nextRetryCount = incident.retryCount + 1;
+
+    // Enforce finite retry limit: escalate if retry budget exhausted
+    if (nextRetryCount > RecoveryService.MAX_INCIDENT_RETRIES) {
+      log('Maximum retry count ({max}) reached for incident {incidentId}. Escalating.', {
+        max: RecoveryService.MAX_INCIDENT_RETRIES,
+        incidentId,
+      });
+
+      await this.escalateIncident(
+        incidentId,
+        fencingToken,
+        leaseOwner,
+        `RETRY_EXHAUSTED: Maximum retry attempts (${RecoveryService.MAX_INCIDENT_RETRIES}) reached without resolution. ${errorDetail}`
+      );
+      return;
+    }
+
     const backoffMs = Math.min(60000, Math.pow(2, nextRetryCount) * 1000);
     const nextRetryAt = new Date(Date.now() + backoffMs);
     const auditId = `aud_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
@@ -485,20 +662,24 @@ export class RecoveryService {
         WHERE id = ${incidentId}
           AND fencing_token = ${fencingToken}
           AND lease_owner = ${leaseOwner}
+          AND lease_expires_at > now()
         RETURNING id
       `;
 
-      if (rows.length > 0) {
-        await tx`
-          INSERT INTO audit_logs (id, order_id, incident_id, action, actor, details, created_at)
-          VALUES (${auditId}, ${incident.orderId}, ${incidentId}, 'RETRY_SCHEDULED', 'RECOVERY_WORKER', ${`Retry #${nextRetryCount} scheduled: ${errorDetail}`}, now())
-        `;
+      if (rows.length === 0) {
+        throw new Error(`Worker lease preempted or expired at retry scheduling for incident ${incidentId}`);
       }
+
+      await tx`
+        INSERT INTO audit_logs (id, order_id, incident_id, action, actor, details, created_at)
+        VALUES (${auditId}, ${incident.orderId}, ${incidentId}, 'RETRY_SCHEDULED', 'RECOVERY_WORKER', ${`Retry #${nextRetryCount} scheduled: ${errorDetail}`}, now())
+      `;
     });
   }
 
   /**
    * Transitions an incident to ESCALATED when unresolvable or security violations occur.
+   * Enforces unexpired lease ownership.
    */
   public async escalateIncident(
     incidentId: string,
@@ -520,6 +701,10 @@ export class RecoveryService {
 
     if (!incident) return;
 
+    if (!incident.leaseExpiresAt || new Date(incident.leaseExpiresAt).getTime() <= Date.now()) {
+      throw new Error(`Worker lease expired for incident ${incidentId}`);
+    }
+
     const auditId = `aud_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`;
 
     await queryClient.begin(async (tx) => {
@@ -535,15 +720,18 @@ export class RecoveryService {
         WHERE id = ${incidentId}
           AND fencing_token = ${fencingToken}
           AND lease_owner = ${leaseOwner}
+          AND lease_expires_at > now()
         RETURNING id
       `;
 
-      if (rows.length > 0) {
-        await tx`
-          INSERT INTO audit_logs (id, order_id, incident_id, action, actor, details, created_at)
-          VALUES (${auditId}, ${incident.orderId}, ${incidentId}, 'INCIDENT_ESCALATED', 'RECOVERY_WORKER', ${`Incident escalated: ${reason}`}, now())
-        `;
+      if (rows.length === 0) {
+        throw new Error(`Worker lease preempted or expired at escalation for incident ${incidentId}`);
       }
+
+      await tx`
+        INSERT INTO audit_logs (id, order_id, incident_id, action, actor, details, created_at)
+        VALUES (${auditId}, ${incident.orderId}, ${incidentId}, 'INCIDENT_ESCALATED', 'RECOVERY_WORKER', ${`Incident escalated: ${reason}`}, now())
+      `;
     });
   }
 }

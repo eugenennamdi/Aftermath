@@ -52,7 +52,7 @@ export class RecoveryWorker {
               AND (
                 (status = 'OPEN' AND (next_retry_at IS NULL OR next_retry_at <= now()))
                 OR
-                (status = 'INVESTIGATING' AND lease_expires_at < now())
+                (status IN ('INVESTIGATING', 'PROVISIONED') AND lease_expires_at < now())
               )
             LIMIT 1
             FOR UPDATE SKIP LOCKED
@@ -69,7 +69,7 @@ export class RecoveryWorker {
             WHERE (
               (status = 'OPEN' AND (next_retry_at IS NULL OR next_retry_at <= now()))
               OR
-              (status = 'INVESTIGATING' AND lease_expires_at < now())
+              (status IN ('INVESTIGATING', 'PROVISIONED') AND lease_expires_at < now())
             )
             ORDER BY created_at DESC
             LIMIT 1
@@ -143,10 +143,16 @@ export class RecoveryWorker {
 
   /**
    * Processes a single claimed incident through the autonomous recovery pipeline.
+   * Runs background lease heartbeat, bounds model calls with timeout, and checks lease validity at boundaries.
    */
   public async processClaimedIncident(
     incident: ClaimedIncident,
-    options?: import('../agent/investigator').InvestigationOptions
+    options?: import('../agent/investigator').InvestigationOptions & {
+      heartbeatIntervalMs?: number;
+      leaseDurationSeconds?: number;
+      investigationTimeoutMs?: number;
+      executionMode?: string;
+    }
   ): Promise<{
     incidentId: string;
     decision: string;
@@ -168,6 +174,7 @@ export class RecoveryWorker {
         workflowSpan?.setAttribute('aftermath.order_id', incident.orderId);
         workflowSpan?.setAttribute('aftermath.worker_id', this.workerId);
         workflowSpan?.setAttribute('aftermath.fencing_token', incident.fencingToken);
+        workflowSpan?.setAttribute('aftermath.execution_mode', options?.executionMode ?? 'PRODUCTION');
 
         log('Worker {workerId} claimed incident {incidentId} (fencing token: {fencingToken})', {
           workerId: this.workerId,
@@ -175,82 +182,126 @@ export class RecoveryWorker {
           fencingToken: incident.fencingToken,
         });
 
-        // Step 1: Execute Autonomous Investigator Agent
-        const investigation = await investigateIncident(
-          incident.id,
-          incident.orderId,
-          incident.paymentReference,
-          options
-        );
+        const heartbeatIntervalMs = options?.heartbeatIntervalMs ?? 10000;
+        const leaseDurationSeconds = options?.leaseDurationSeconds ?? 30;
+        const timeoutMs = options?.investigationTimeoutMs ?? 60000;
 
-        workflowSpan?.setAttribute('aftermath.agent.proposed_decision', investigation.decision);
-        workflowSpan?.setAttribute('aftermath.agent.model', investigation.modelUsed);
-        workflowSpan?.setAttribute('aftermath.agent.tool_sequence', JSON.stringify(investigation.toolSequence));
+        let leaseActive = true;
+        let leaseError: Error | null = null;
+        let heartbeatTimer: NodeJS.Timeout | null = null;
 
-        let executionOutcome: Record<string, unknown> = {};
-
-        // Step 2: Route through Deterministic Authorization Gate & Committer
-        switch (investigation.decision) {
-          case 'PROPOSE_RECOVERY': {
-            const outcome = await recoveryService.authorizeAndExecuteRecovery(
-              incident.id,
-              incident.fencingToken,
-              this.workerId,
-              investigation
-            );
-            executionOutcome = outcome as unknown as Record<string, unknown>;
-            break;
-          }
-
-          case 'RECONCILE_EXISTING': {
-            const outcome = await recoveryService.reconcileExistingEntitlement(
-              incident.id,
-              incident.fencingToken,
-              this.workerId,
-              investigation.summary
-            );
-            executionOutcome = outcome as unknown as Record<string, unknown>;
-            break;
-          }
-
-          case 'RETRY_LATER': {
-            await recoveryService.scheduleIncidentRetry(
-              incident.id,
-              incident.fencingToken,
-              this.workerId,
-              investigation.summary
-            );
-            executionOutcome = { status: 'RETRY_SCHEDULED', reason: investigation.summary };
-            break;
-          }
-
-          case 'ESCALATE': {
-            await recoveryService.escalateIncident(
-              incident.id,
-              incident.fencingToken,
-              this.workerId,
-              investigation.summary
-            );
-            executionOutcome = { status: 'ESCALATED', reason: investigation.summary };
-            break;
-          }
+        // Background Heartbeat Lease Renewal
+        if (heartbeatIntervalMs > 0) {
+          heartbeatTimer = setInterval(async () => {
+            try {
+              const renewed = await this.extendLease(incident.id, incident.fencingToken, leaseDurationSeconds);
+              if (!renewed) {
+                leaseActive = false;
+                leaseError = new Error(`Worker ${this.workerId} lost lease for incident ${incident.id}`);
+                if (heartbeatTimer) clearInterval(heartbeatTimer);
+              }
+            } catch (err) {
+              log('Heartbeat lease renewal failed: {error}', { error: (err as Error).message });
+            }
+          }, heartbeatIntervalMs);
         }
 
-        // Flush telemetry
         try {
-          await flush();
-        } catch {
-          // Non-blocking flush
-        }
+          // Step 1: Execute Autonomous Investigator Agent with bounded timeout
+          const investigationPromise = investigateIncident(
+            incident.id,
+            incident.orderId,
+            incident.paymentReference,
+            options
+          );
 
-        return {
-          incidentId: incident.id,
-          decision: investigation.decision,
-          modelUsed: investigation.modelUsed,
-          turnsExecuted: investigation.turnsExecuted,
-          toolSequence: investigation.toolSequence,
-          outcome: executionOutcome,
-        };
+          const timeoutPromise = new Promise<never>((_, reject) => {
+            const t = setTimeout(() => {
+              reject(new Error(`Investigation timed out after ${timeoutMs}ms for incident ${incident.id}`));
+            }, timeoutMs);
+            if (t.unref) t.unref();
+          });
+
+          const investigation = await Promise.race([investigationPromise, timeoutPromise]);
+
+          // Verify lease is still actively held before entering mutation boundary
+          if (!leaseActive || leaseError) {
+            throw (leaseError || new Error(`Worker lease expired during investigation for incident ${incident.id}`));
+          }
+
+          workflowSpan?.setAttribute('aftermath.agent.proposed_decision', investigation.decision);
+          workflowSpan?.setAttribute('aftermath.agent.model', investigation.modelUsed);
+          workflowSpan?.setAttribute('aftermath.agent.tool_sequence', JSON.stringify(investigation.toolSequence));
+
+          let executionOutcome: Record<string, unknown> = {};
+
+          // Step 2: Route through Deterministic Authorization Gate & Committer
+          switch (investigation.decision) {
+            case 'PROPOSE_RECOVERY': {
+              const outcome = await recoveryService.authorizeAndExecuteRecovery(
+                incident.id,
+                incident.fencingToken,
+                this.workerId,
+                investigation
+              );
+              executionOutcome = outcome as unknown as Record<string, unknown>;
+              break;
+            }
+
+            case 'RECONCILE_EXISTING': {
+              const outcome = await recoveryService.reconcileExistingEntitlement(
+                incident.id,
+                incident.fencingToken,
+                this.workerId,
+                investigation.summary
+              );
+              executionOutcome = outcome as unknown as Record<string, unknown>;
+              break;
+            }
+
+            case 'RETRY_LATER': {
+              await recoveryService.scheduleIncidentRetry(
+                incident.id,
+                incident.fencingToken,
+                this.workerId,
+                investigation.summary
+              );
+              executionOutcome = { status: 'RETRY_SCHEDULED', reason: investigation.summary };
+              break;
+            }
+
+            case 'ESCALATE': {
+              await recoveryService.escalateIncident(
+                incident.id,
+                incident.fencingToken,
+                this.workerId,
+                investigation.summary
+              );
+              executionOutcome = { status: 'ESCALATED', reason: investigation.summary };
+              break;
+            }
+          }
+
+          // Flush telemetry
+          try {
+            await flush();
+          } catch {
+            // Non-blocking flush
+          }
+
+          return {
+            incidentId: incident.id,
+            decision: investigation.decision,
+            modelUsed: investigation.modelUsed,
+            turnsExecuted: investigation.turnsExecuted,
+            toolSequence: investigation.toolSequence,
+            outcome: executionOutcome,
+          };
+        } finally {
+          if (heartbeatTimer) {
+            clearInterval(heartbeatTimer);
+          }
+        }
       }
     );
   }

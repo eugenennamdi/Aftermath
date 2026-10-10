@@ -1,5 +1,6 @@
 import { config } from 'dotenv';
 import dns from 'node:dns';
+import { EnvHttpProxyAgent, setGlobalDispatcher } from 'undici';
 
 try {
   dns.setDefaultResultOrder('ipv4first');
@@ -10,6 +11,14 @@ try {
 // Load environment variables (.env.local has precedence over .env)
 config({ path: '.env.local' });
 config({ path: '.env' });
+
+try {
+  if (process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.https_proxy || process.env.http_proxy) {
+    setGlobalDispatcher(new EnvHttpProxyAgent());
+  }
+} catch {
+  // Ignore in environments where proxy dispatcher is unsupported
+}
 
 import { init, trace, span, flush, log } from 'neatlogs';
 
