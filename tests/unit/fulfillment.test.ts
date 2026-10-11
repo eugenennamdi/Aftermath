@@ -2,7 +2,10 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import crypto from 'node:crypto';
 import { db } from '@/db';
 import { customers, orders, entitlements, incidents } from '@/db/schema';
-import { processNormalFulfillment } from '@/services/fulfillment';
+import {
+  processNormalFulfillment,
+  validateFulfillmentInvariants,
+} from '@/services/fulfillment';
 import { PaystackClient, generatePaystackReference } from '@/lib/paystack';
 import {
   getPendingOrdersForReconciliation,
@@ -221,5 +224,107 @@ describe('Normal SaaS Fulfillment & Reconciliation Engine (Regression Checks 4, 
     expect(incident).toBeDefined();
     expect(incident.status).toBe('OPEN');
     expect(incident.reason).toBe('FULFILLMENT_FAILED');
+  });
+
+  it('successful fulfillment: transitions order to FULFILLED with valid paidAt and exactly 1 active entitlement (Case 1 Acceptance Invariant)', async () => {
+    const paidTimestamp = new Date();
+    const mockClient = {
+      verifyTransaction: vi.fn().mockResolvedValue({
+        outcome: 'SUCCESS',
+        reference,
+        amount: 500000,
+        currency: 'NGN',
+        customerEmail,
+        paidAt: paidTimestamp,
+      }),
+      hasSecretKey: () => true,
+    } as unknown as PaystackClient;
+
+    const result = await processNormalFulfillment(orderId, { client: mockClient });
+    expect(result.status).toBe('FULFILLED');
+
+    const check = await validateFulfillmentInvariants(orderId);
+    expect(check.isValid).toBe(true);
+    expect(check.error).toBeUndefined();
+    expect(check.order?.status).toBe('FULFILLED');
+    expect(check.order?.paidAt).toBeInstanceOf(Date);
+    expect(check.entitlement?.status).toBe('ACTIVE');
+    expect(check.entitlement?.orderId).toBe(orderId);
+    expect(check.entitlement?.customerId).toBe(customerId);
+    expect(check.entitlement?.planId).toBe('plan_starter_monthly');
+    expect(check.entitlement?.sourceReference).toBe(reference);
+  });
+
+  it('idempotent rerun: returns ALREADY_FULFILLED and preserves single active entitlement without duplication (Case 1 Acceptance Invariant)', async () => {
+    const mockClient = {
+      verifyTransaction: vi.fn().mockResolvedValue({
+        outcome: 'SUCCESS',
+        reference,
+        amount: 500000,
+        currency: 'NGN',
+        customerEmail,
+        paidAt: new Date(),
+      }),
+      hasSecretKey: () => true,
+    } as unknown as PaystackClient;
+
+    // First fulfillment
+    const initialResult = await processNormalFulfillment(orderId, { client: mockClient });
+    expect(initialResult.status).toBe('FULFILLED');
+
+    // Second execution (rerun)
+    const rerunResult = await processNormalFulfillment(orderId, { client: mockClient });
+    expect(rerunResult.status).toBe('ALREADY_FULFILLED');
+
+    // Invariants must still hold true
+    const check = await validateFulfillmentInvariants(orderId);
+    expect(check.isValid).toBe(true);
+    expect(check.order?.status).toBe('FULFILLED');
+
+    // Confirm strictly exactly 1 entitlement in database
+    const allEntitlements = await db
+      .select()
+      .from(entitlements)
+      .where(eq(entitlements.orderId, orderId));
+    expect(allEntitlements.length).toBe(1);
+  });
+
+  it('invalid final state rejection: validateFulfillmentInvariants rejects unfulfilled orders, missing paidAt, and expired access (Case 1 Acceptance Invariant)', async () => {
+    const mockClient = {
+      verifyTransaction: vi.fn().mockResolvedValue({
+        outcome: 'SUCCESS',
+        reference,
+        amount: 500000,
+        currency: 'NGN',
+        customerEmail,
+        paidAt: new Date(),
+      }),
+      hasSecretKey: () => true,
+    } as unknown as PaystackClient;
+
+    await processNormalFulfillment(orderId, { client: mockClient });
+
+    // Sub-case A: Order status not FULFILLED (e.g. prematurely PAID)
+    await db.update(orders).set({ status: 'PAID' }).where(eq(orders.id, orderId));
+    const checkA = await validateFulfillmentInvariants(orderId);
+    expect(checkA.isValid).toBe(false);
+    expect(checkA.error).toContain('expected "FULFILLED"');
+
+    // Restore to FULFILLED, but test Sub-case B: missing paidAt
+    await db.update(orders).set({ status: 'FULFILLED', paidAt: null }).where(eq(orders.id, orderId));
+    const checkB = await validateFulfillmentInvariants(orderId);
+    expect(checkB.isValid).toBe(false);
+    expect(checkB.error).toContain('missing valid paidAt timestamp');
+
+    // Restore paidAt, but test Sub-case C: expired access window
+    await db.update(orders).set({ paidAt: new Date() }).where(eq(orders.id, orderId));
+    const pastDate = new Date(Date.now() - 3600000);
+    await db
+      .update(entitlements)
+      .set({ expiresAt: pastDate })
+      .where(eq(entitlements.orderId, orderId));
+    const checkC = await validateFulfillmentInvariants(orderId);
+    expect(checkC.isValid).toBe(false);
+    expect(checkC.error).toContain('expired');
   });
 });

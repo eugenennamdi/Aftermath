@@ -2,7 +2,10 @@ import { eq, or } from 'drizzle-orm';
 import { db, getSanitizedDatabaseTarget } from '../src/db';
 import { orders, customers, incidents, entitlements, auditLogs } from '../src/db/schema';
 import { paystackClient } from '../src/lib/paystack';
-import { processNormalFulfillment } from '../src/services/fulfillment';
+import {
+  processNormalFulfillment,
+  validateFulfillmentInvariants,
+} from '../src/services/fulfillment';
 import { createOrGetIncident } from '../src/services/incident';
 import { RecoveryWorker } from '../src/worker/recovery-worker';
 import { initNeatlogs } from '../src/lib/neatlogs';
@@ -73,58 +76,62 @@ async function main() {
 
     console.log('[CASE 1] Fulfillment Engine Result:', JSON.stringify(result, null, 2));
 
-    if (result.status !== 'FULFILLED') {
+    // Allow both first-time FULFILLED and idempotent rerun ALREADY_FULFILLED
+    if (result.status !== 'FULFILLED' && result.status !== 'ALREADY_FULFILLED') {
       console.error(`ERROR: Normal fulfillment did not complete (status=${result.status}).`);
       if (result.status === 'PAYMENT_PENDING' || result.status === 'PAYMENT_FAILED') {
         console.error('Hint: Ensure you completed the test payment on Paystack checkout before verifying.');
       }
       process.exit(1);
     }
+    console.log(`✓ Fulfillment Engine status: ${result.status}`);
 
-    // Confirm authoritative entitlement in database
-    const [ent] = await db
-      .select()
-      .from(entitlements)
-      .where(eq(entitlements.orderId, order.id))
-      .limit(1);
-
-    const [updatedOrder] = await db
-      .select()
-      .from(orders)
-      .where(eq(orders.id, order.id))
-      .limit(1);
-
-    // Invariant checks
-    if (!updatedOrder || updatedOrder.status !== 'PAID' || !updatedOrder.paidAt) {
-      console.error('INVARIANT FAILURE: Order status is not PAID with valid paidAt.');
+    // Independently verify live Paystack transaction parameters against trusted order
+    console.log('[CASE 1] Independently verifying live Paystack transaction parameters...');
+    const verifyOutcome = await paystackClient.verifyTransaction(order.paymentReference);
+    if (verifyOutcome.outcome !== 'SUCCESS') {
+      console.error(`ERROR: Live Paystack transaction outcome is "${verifyOutcome.outcome}".`);
       process.exit(1);
     }
 
-    if (!ent || ent.status !== 'ACTIVE') {
-      console.error('INVARIANT FAILURE: Normal fulfillment entitlement is not ACTIVE.');
+    const binding = validateOrderPaymentBinding(
+      { order, customer },
+      {
+        reference: verifyOutcome.reference,
+        amount: verifyOutcome.amount,
+        currency: verifyOutcome.currency,
+        customerEmail: verifyOutcome.customerEmail,
+      }
+    );
+
+    if (!binding.isValid) {
+      console.error(`CRITICAL INVARIANT FAILURE: Payment binding mismatch.`);
+      console.error(`Reason: ${binding.mismatchReason}`);
+      console.error('Expected:', binding.expected);
+      console.error('Actual:', binding.actual);
+      process.exit(1);
+    }
+    console.log('✓ Independent Mathematical Equality & Identity Binding Verified.');
+
+    // Validate authoritative database fulfillment invariants (status FULFILLED, paidAt, exactly 1 active entitlement, unexpired access)
+    console.log('[CASE 1] Validating authoritative post-fulfillment invariants in database...');
+    const invariantCheck = await validateFulfillmentInvariants(order.id);
+    if (!invariantCheck.isValid || !invariantCheck.order || !invariantCheck.entitlement) {
+      console.error(`INVARIANT FAILURE: ${invariantCheck.error}`);
       process.exit(1);
     }
 
-    if (
-      ent.customerId !== order.customerId ||
-      ent.planId !== order.planId ||
-      ent.sourceReference !== order.paymentReference
-    ) {
-      console.error('INVARIANT FAILURE: Entitlement binding mismatch on order/customer/plan/reference.');
-      process.exit(1);
-    }
-
-    if (ent.startedAt.getTime() > Date.now() || ent.expiresAt.getTime() <= Date.now()) {
-      console.error('INVARIANT FAILURE: Entitlement access window is invalid or expired.');
-      process.exit(1);
-    }
+    const updatedOrder = invariantCheck.order;
+    const ent = invariantCheck.entitlement;
 
     console.log('--------------------------------------------------------------------------------');
     console.log('✓ CASE 1 SUCCESS: Normal SaaS Fulfillment Confirmed without AI intervention!');
-    console.log(`  - Order Status:       ${updatedOrder.status} (PAID at ${updatedOrder.paidAt.toISOString()})`);
+    console.log(`  - Order ID:           ${updatedOrder.id}`);
+    console.log(`  - Order Status:       ${updatedOrder.status} (paidAt: ${updatedOrder.paidAt?.toISOString()})`);
     console.log(`  - Entitlement ID:     ${ent.id}`);
     console.log(`  - Entitlement Status: ${ent.status}`);
     console.log(`  - Access Window:      ${ent.startedAt.toISOString()} to ${ent.expiresAt.toISOString()}`);
+    console.log(`  - Fulfillment Result: ${result.status}`);
     console.log(`  - AI Invocation:      NONE (Deterministic Normal Pipeline)`);
     console.log('================================================================================');
   } else if (caseArg === '2') {

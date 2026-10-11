@@ -232,3 +232,120 @@ export async function processNormalFulfillment(
     error: provisionResult.error,
   };
 }
+
+export interface FulfillmentInvariantCheckResult {
+  isValid: boolean;
+  order?: typeof orders.$inferSelect;
+  entitlement?: typeof entitlements.$inferSelect;
+  error?: string;
+}
+
+/**
+ * Validates authoritative post-fulfillment invariants against the relational database:
+ * 1. Final order status must be 'FULFILLED'.
+ * 2. Order must possess a valid, non-null paidAt timestamp (no fabrication).
+ * 3. Exactly one ACTIVE entitlement must exist for the order.
+ * 4. Entitlement customerId, planId, and sourceReference must match order.
+ * 5. Entitlement access window must be effective and unexpired.
+ */
+export async function validateFulfillmentInvariants(
+  orderId: string
+): Promise<FulfillmentInvariantCheckResult> {
+  const [order] = await db
+    .select()
+    .from(orders)
+    .where(eq(orders.id, orderId))
+    .limit(1);
+
+  if (!order) {
+    return { isValid: false, error: `Order "${orderId}" not found in database.` };
+  }
+
+  if (order.status !== 'FULFILLED') {
+    return {
+      isValid: false,
+      order,
+      error: `Order status is "${order.status}", expected "FULFILLED".`,
+    };
+  }
+
+  if (!order.paidAt) {
+    return {
+      isValid: false,
+      order,
+      error: 'Order record is missing valid paidAt timestamp.',
+    };
+  }
+
+  const orderEntitlements = await db
+    .select()
+    .from(entitlements)
+    .where(eq(entitlements.orderId, orderId));
+
+  if (orderEntitlements.length === 0) {
+    return {
+      isValid: false,
+      order,
+      error: 'No active entitlement found for order.',
+    };
+  }
+
+  if (orderEntitlements.length > 1) {
+    return {
+      isValid: false,
+      order,
+      error: `Expected exactly 1 entitlement for order, found ${orderEntitlements.length}.`,
+    };
+  }
+
+  const ent = orderEntitlements[0];
+
+  if (ent.status !== 'ACTIVE') {
+    return {
+      isValid: false,
+      order,
+      entitlement: ent,
+      error: `Normal fulfillment entitlement is not ACTIVE (status: ${ent.status}).`,
+    };
+  }
+
+  if (ent.customerId !== order.customerId) {
+    return {
+      isValid: false,
+      order,
+      entitlement: ent,
+      error: `Entitlement customerId "${ent.customerId}" does not match order "${order.customerId}".`,
+    };
+  }
+
+  if (ent.planId !== order.planId) {
+    return {
+      isValid: false,
+      order,
+      entitlement: ent,
+      error: `Entitlement planId "${ent.planId}" does not match order plan "${order.planId}".`,
+    };
+  }
+
+  if (ent.sourceReference !== order.paymentReference) {
+    return {
+      isValid: false,
+      order,
+      entitlement: ent,
+      error: `Entitlement sourceReference "${ent.sourceReference}" does not match order paymentReference "${order.paymentReference}".`,
+    };
+  }
+
+  const now = Date.now();
+  if (ent.startedAt.getTime() > now || ent.expiresAt.getTime() <= now) {
+    return {
+      isValid: false,
+      order,
+      entitlement: ent,
+      error: `Entitlement access window is invalid or expired (${ent.startedAt.toISOString()} to ${ent.expiresAt.toISOString()}).`,
+    };
+  }
+
+  return { isValid: true, order, entitlement: ent };
+}
+
