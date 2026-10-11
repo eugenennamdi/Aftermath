@@ -204,7 +204,7 @@ describe('Operator Console UI — Truthful Incident Timeline & Evidence', () => 
     const step5 = timeline.find((s: TimelineStage) => s.stepNumber === 5);
     expect(step5?.title).toBe('Pre-existing Entitlement Observed & Reconciled');
     expect(step5?.badgeLabel).toBe('RECONCILED');
-    expect(step5?.description).toContain('Access was granted prior; zero duplicate mutations');
+    expect(step5?.description).toContain('Access was granted prior; no duplicate mutation required');
 
     const step6 = timeline.find((s: TimelineStage) => s.stepNumber === 6);
     expect(step6?.title).toBe('Incident Resolved via Reconciliation');
@@ -257,8 +257,11 @@ describe('Operator Console UI — Truthful Incident Timeline & Evidence', () => 
     expect(gateStepB?.status).toBe('BLOCKED');
 
     const step5B = retryTimeline.find((s: TimelineStage) => s.stepNumber === 5);
-    expect(step5B?.title).toBe('No Entitlement Linked');
+    expect(step5B?.title).toBe('No Entitlement in Dossier');
     expect(step5B?.badgeLabel).toBe('NOT CREATED');
+    expect(step5B?.description).toBe('No entitlement returned in incident dossier.');
+    expect(step5B?.description).not.toContain('Zero entitlement');
+    expect(step5B?.description).not.toContain('zero');
   });
 
   it('4. Independent verification is not falsely claimed without audit record', () => {
@@ -340,59 +343,105 @@ describe('Operator Console UI — Truthful Incident Timeline & Evidence', () => 
     );
   });
 
-  it('6. Transaction reference matching distinguishes live provider match from local binding', () => {
+  it('6. Transaction reference matching strictly gates live provider match and forbids simulated fixture / local substitution', () => {
     const now = new Date();
-    // Provider verified and matches order paymentReference
-    const matchView = createMockIncidentDetailView({
+    // Case 1: Genuine live HTTP provider verification with matching reference
+    const liveMatchView = createMockIncidentDetailView({
       evidenceDossier: {
         paymentVerificationState: 'PROVIDER_VERIFIED',
+        verificationProvenance: 'LIVE_HTTP',
       },
       order: {
         paymentReference: 'ref_live_match',
       },
-      paymentEvents: [
+      auditTrail: [
         {
-          id: 'pe_1',
-          paymentReference: 'ref_live_match',
-          eventType: 'charge.success',
-          status: 'success',
-          amount: 500000,
-          currency: 'NGN',
-          customerEmailRedacted: 'al***@example.com',
-          gatewayResponse: 'Successful',
+          id: 'aud_live_1',
+          action: 'PAYSTACK_VERIFIED',
+          actor: 'paystack_adapter',
+          details: JSON.stringify({ reference: 'ref_live_match', provenance: 'LIVE_HTTP' }),
           createdAt: now,
         },
       ],
     });
-    const matchResult = determineReferenceMatch(matchView);
-    expect(matchResult.isReferenceMatched).toBe(true);
-    expect(matchResult.displayStatus).toBe('MATCH');
+    const liveMatchResult = determineReferenceMatch(liveMatchView);
+    expect(liveMatchResult.hasProviderVerification).toBe(true);
+    expect(liveMatchResult.verifiedPaymentRef).toBe('ref_live_match');
+    expect(liveMatchResult.isReferenceMatched).toBe(true);
+    expect(liveMatchResult.displayStatus).toBe('MATCH');
 
-    // Payment reference present locally, but provider unverified
-    const localBindingOnlyView = createMockIncidentDetailView({
+    // Case 2: SIMULATED_FIXTURE must NEVER display a live-provider MATCH or substitute local reference
+    const simulatedFixtureView = createMockIncidentDetailView({
+      evidenceDossier: {
+        paymentVerificationState: 'SIMULATED_FIXTURE',
+        verificationProvenance: 'SCOPED_FIXTURE',
+      },
+      incident: {
+        paymentReference: 'ref_simulated_same',
+      },
+      order: {
+        paymentReference: 'ref_simulated_same',
+      },
+      auditTrail: [
+        {
+          id: 'aud_fix_1',
+          action: 'PAYSTACK_FIXTURE_VERIFIED',
+          actor: 'paystack_fixture',
+          details: JSON.stringify({ reference: 'ref_simulated_same', provenance: 'SCOPED_FIXTURE' }),
+          createdAt: now,
+        },
+      ],
+    });
+    const fixtureResult = determineReferenceMatch(simulatedFixtureView);
+    expect(fixtureResult.hasProviderVerification).toBe(false);
+    expect(fixtureResult.verifiedPaymentRef).toBeNull();
+    expect(fixtureResult.isReferenceMatched).toBe(false);
+    expect(fixtureResult.displayStatus).toBe('LOCAL BINDING ONLY');
+
+    // Case 3: Genuine live HTTP provider verification with mismatched reference
+    const liveMismatchView = createMockIncidentDetailView({
+      evidenceDossier: {
+        paymentVerificationState: 'PROVIDER_VERIFIED',
+        verificationProvenance: 'LIVE_HTTP',
+      },
+      order: {
+        paymentReference: 'ref_order_expected',
+      },
+      auditTrail: [
+        {
+          id: 'aud_live_2',
+          action: 'PAYSTACK_VERIFIED',
+          actor: 'paystack_adapter',
+          details: JSON.stringify({ reference: 'ref_live_different', provenance: 'LIVE_HTTP' }),
+          createdAt: now,
+        },
+      ],
+    });
+    const mismatchResult = determineReferenceMatch(liveMismatchView);
+    expect(mismatchResult.hasProviderVerification).toBe(true);
+    expect(mismatchResult.verifiedPaymentRef).toBe('ref_live_different');
+    expect(mismatchResult.isReferenceMatched).toBe(false);
+    expect(mismatchResult.displayStatus).toBe('MISMATCH');
+
+    // Case 4: Local reference binding without live provider verification
+    const unverifiedView = createMockIncidentDetailView({
       evidenceDossier: {
         paymentVerificationState: 'UNVERIFIED',
+        verificationProvenance: 'UNVERIFIED',
+      },
+      incident: {
+        paymentReference: 'ref_local_only',
       },
       order: {
         paymentReference: 'ref_local_only',
       },
-      paymentEvents: [
-        {
-          id: 'pe_2',
-          paymentReference: 'ref_local_only',
-          eventType: 'charge.success',
-          status: 'success',
-          amount: 500000,
-          currency: 'NGN',
-          customerEmailRedacted: 'al***@example.com',
-          gatewayResponse: null,
-          createdAt: now,
-        },
-      ],
+      auditTrail: [],
     });
-    const localResult = determineReferenceMatch(localBindingOnlyView);
-    expect(localResult.isReferenceMatched).toBe(false);
-    expect(localResult.displayStatus).toBe('LOCAL BINDING ONLY');
+    const unverifiedResult = determineReferenceMatch(unverifiedView);
+    expect(unverifiedResult.hasProviderVerification).toBe(false);
+    expect(unverifiedResult.verifiedPaymentRef).toBeNull();
+    expect(unverifiedResult.isReferenceMatched).toBe(false);
+    expect(unverifiedResult.displayStatus).toBe('LOCAL BINDING ONLY');
   });
 
   it('7. Operations overview view does not contain unconditional fixture badge', () => {

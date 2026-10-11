@@ -42,24 +42,59 @@ export interface TimelineStage {
 }
 
 export function determineReferenceMatch(data: IncidentDetailView) {
-  const hasProviderVerification = Boolean(
-    data.evidenceDossier.paymentVerificationState === 'PROVIDER_VERIFIED' ||
-      data.evidenceDossier.paymentVerificationState === 'SIMULATED_FIXTURE'
+  // Only genuine LIVE_HTTP provider verification qualifies as live gateway verification
+  const isLiveProviderVerified = Boolean(
+    data.evidenceDossier.paymentVerificationState === 'PROVIDER_VERIFIED' &&
+      data.evidenceDossier.verificationProvenance === 'LIVE_HTTP'
   );
-  const paymentRefFromEvents =
-    data.paymentEvents.length > 0 ? data.paymentEvents[0].paymentReference : null;
-  const verifiedPaymentRef = paymentRefFromEvents || (hasProviderVerification ? data.incident.paymentReference : null);
+
+  // Extract verified payment reference strictly from live provider audit log if available
+  let verifiedPaymentRef: string | null = null;
+  if (isLiveProviderVerified && Array.isArray(data.auditTrail)) {
+    const liveLog = data.auditTrail.find(
+      (l) =>
+        (l.action === 'PAYSTACK_VERIFIED' || l.action === 'PAYMENT_VERIFIED') &&
+        l.actor === 'paystack_adapter' &&
+        l.details
+    );
+    if (liveLog?.details) {
+      try {
+        const parsed = JSON.parse(liveLog.details);
+        if (typeof parsed.reference === 'string' && parsed.reference.trim()) {
+          verifiedPaymentRef = parsed.reference.trim();
+        }
+      } catch {
+        // parse error ignored
+      }
+    }
+  }
+
+  // A live match occurs strictly when a live provider reference exists and equals the trusted order reference
   const isReferenceMatched = Boolean(
-    hasProviderVerification && verifiedPaymentRef && verifiedPaymentRef === data.order.paymentReference
+    isLiveProviderVerified &&
+      verifiedPaymentRef &&
+      verifiedPaymentRef === data.order.paymentReference
   );
-  const displayStatus: 'MATCH' | 'LOCAL BINDING ONLY' | 'UNVERIFIED' = isReferenceMatched
-    ? 'MATCH'
-    : verifiedPaymentRef
-    ? 'LOCAL BINDING ONLY'
-    : 'UNVERIFIED';
+
+  const isReferenceMismatch = Boolean(
+    isLiveProviderVerified &&
+      verifiedPaymentRef &&
+      verifiedPaymentRef !== data.order.paymentReference
+  );
+
+  let displayStatus: 'MATCH' | 'MISMATCH' | 'LOCAL BINDING ONLY' | 'UNVERIFIED';
+  if (isReferenceMatched) {
+    displayStatus = 'MATCH';
+  } else if (isReferenceMismatch) {
+    displayStatus = 'MISMATCH';
+  } else if (data.order.paymentReference || data.incident.paymentReference) {
+    displayStatus = 'LOCAL BINDING ONLY';
+  } else {
+    displayStatus = 'UNVERIFIED';
+  }
 
   return {
-    hasProviderVerification,
+    hasProviderVerification: isLiveProviderVerified,
     verifiedPaymentRef,
     isReferenceMatched,
     displayStatus,
@@ -254,7 +289,7 @@ export function buildTruthfulTimeline(view: IncidentDetailView): TimelineStage[]
         title: 'Pre-existing Entitlement Observed & Reconciled',
         badgeLabel: 'RECONCILED',
         status: 'COMPLETED',
-        description: `Active entitlement ${entitlement.id} confirmed in database. Access was granted prior; zero duplicate mutations performed.`,
+        description: `Active entitlement ${entitlement.id} confirmed in database. Access was granted prior; no duplicate mutation required.`,
       });
     } else if (entitlement && entitlement.isActive) {
       stages.push({
@@ -279,10 +314,10 @@ export function buildTruthfulTimeline(view: IncidentDetailView): TimelineStage[]
     } else if (incident.status === 'ESCALATED') {
       stages.push({
         stepNumber: 5,
-        title: 'No Entitlement Linked',
+        title: 'No Entitlement in Dossier',
         badgeLabel: 'NOT CREATED',
         status: 'BLOCKED',
-        description: 'Zero entitlement records created for this incident in the database.',
+        description: 'No entitlement returned in incident dossier.',
       });
     } else {
       stages.push({
@@ -769,7 +804,7 @@ export function IncidentDetailModal({
                         <td className="p-3 px-4 text-foreground/90 font-medium">Active Entitlement</td>
                         <td className="p-3 px-4 font-mono text-foreground">{data.plan?.name || 'Configured Plan'}</td>
                         <td className="p-3 px-4 font-mono text-foreground">
-                          {data.entitlement ? data.entitlement.id : 'No record linked'}
+                          {data.entitlement ? data.entitlement.id : 'No entitlement returned in dossier'}
                         </td>
                         <td className="p-3 px-4 text-right">
                           <span
