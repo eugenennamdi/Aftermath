@@ -5,7 +5,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Mode-blue.svg)](https://www.typescriptlang.org/)
 [![Next.js](https://img.shields.io/badge/Next.js-16.4.0-black.svg)](https://nextjs.org/)
 [![neatlogs](https://img.shields.io/badge/neatlogs-Verified%20Telemetry-emerald.svg)](https://neatlogs.com)
-[![Entire](https://img.shields.io/badge/Entire-Checkpoint%20Tracked-indigo.svg)](https://entire.dev)
+[![Entire](https://img.shields.io/badge/Entire-Checkpoint%20Tracked-indigo.svg)](https://entire.io)
 [![cfo.ai](https://img.shields.io/badge/cfo.ai-Business%20Model%20Included-amber.svg)](docs/business-plan/Aftermath-Business-Plan.pdf)
 
 ---
