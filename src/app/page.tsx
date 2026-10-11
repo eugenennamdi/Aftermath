@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { OperatorHeader, type ActiveTab } from '@/components/operator-header';
 import { OperationsOverviewView } from '@/components/operations-overview-view';
 import { IncidentStreamView } from '@/components/incident-stream-view';
@@ -149,7 +149,7 @@ export default function OperatorConsolePage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#FAFAF9] text-[#171B23] flex flex-col font-sans selection:bg-[#44647B]/15 selection:text-[#171B23]">
+    <div className="min-h-screen bg-background text-foreground flex flex-col font-sans selection:bg-primary/15 selection:text-foreground">
       {/* Top Application Bar */}
       <OperatorHeader
         activeTab={activeTab}
@@ -229,19 +229,19 @@ export default function OperatorConsolePage() {
       />
 
       {/* Footer */}
-      <footer className="border-t border-[#E5E7EB] bg-white py-6 text-xs text-[#69717C] font-mono">
+      <footer className="border-t border-border bg-card py-6 text-xs text-muted-foreground font-mono">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <span className="font-medium text-[#171B23]">Aftermath</span>
+            <span className="font-medium text-foreground">Aftermath</span>
             <span>•</span>
             <span>neatHack 2026</span>
             <span>•</span>
             <span>Autonomous Recovery Engine</span>
           </div>
-          <div className="flex items-center gap-4 text-[#9CA3AF]">
+          <div className="flex items-center gap-4 text-muted-foreground/80">
             <span>Claude Sonnet 4.6 (LiteLLM)</span>
             <span>neatlogs SDK</span>
-            <span>PostgreSQL 17</span>
+            <span>PostgreSQL 18</span>
           </div>
         </div>
       </footer>

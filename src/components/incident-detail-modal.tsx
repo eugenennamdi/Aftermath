@@ -2,23 +2,41 @@
 
 import React, { useState, useEffect } from 'react';
 import { type IncidentDetailView } from '@/services/query';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogClose,
+} from './ui/dialog';
 import { StatusBadge } from './ui/badge';
 import {
-  XIcon,
   ShieldCheckIcon,
   ActivityIcon,
   AlertTriangleIcon,
   CheckCircleIcon,
-  DatabaseIcon,
-  ServerIcon,
   ClockIcon,
   ExternalLinkIcon,
   CopyIcon,
+  LockIcon,
 } from './ui/icons';
 
 interface IncidentDetailModalProps {
   incidentId: string | null;
   onClose: () => void;
+}
+
+type TimelineStageStatus = 'COMPLETED' | 'IN_PROGRESS' | 'REJECTED' | 'PENDING' | 'BLOCKED';
+
+interface TimelineStage {
+  stepNumber: number;
+  title: string;
+  badgeLabel: string;
+  status: TimelineStageStatus;
+  timestamp?: string | null;
+  description: string;
+  callout?: React.ReactNode;
 }
 
 export function IncidentDetailModal({
@@ -32,15 +50,11 @@ export function IncidentDetailModal({
   const [copiedText, setCopiedText] = useState<string | null>(null);
 
   useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
+    if (!incidentId) {
+      setData(null);
+      setError(null);
+      return;
     }
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
-
-  useEffect(() => {
-    if (!incidentId) return;
 
     let isMounted = true;
     setIsLoading(true);
@@ -48,8 +62,12 @@ export function IncidentDetailModal({
 
     fetch(`/api/incidents/${incidentId}`)
       .then(async (res) => {
-        if (res.status === 401) throw new Error('Operator authentication required to view incident dossier. Please unlock via Operator Login.');
-        if (!res.ok) throw new Error(`Incident ${incidentId} not found`);
+        if (res.status === 401) {
+          throw new Error('Operator authentication required to view incident dossier.');
+        }
+        if (!res.ok) {
+          throw new Error(`Incident ${incidentId} not found`);
+        }
         return res.json();
       })
       .then((json) => {
@@ -67,34 +85,236 @@ export function IncidentDetailModal({
     };
   }, [incidentId]);
 
-  if (!incidentId) return null;
-
   function copyText(val: string) {
     navigator.clipboard.writeText(val);
     setCopiedText(val);
     setTimeout(() => setCopiedText(null), 2000);
   }
 
+  // Derive truthful, evidence-based stages from authoritative DTO data
+  function buildTruthfulTimeline(view: IncidentDetailView): TimelineStage[] {
+    const { incident, order, entitlement, evidenceDossier } = view;
+    const stages: TimelineStage[] = [];
+
+    // Stage 1: Detection
+    stages.push({
+      stepNumber: 1,
+      title: 'Incident Detected & Ingested',
+      badgeLabel: 'DETECTION',
+      status: 'COMPLETED',
+      timestamp: incident.createdAt ? new Date(incident.createdAt).toLocaleTimeString() : null,
+      description: `Discrepancy registered with reason: "${incident.reason}". Bound to trusted order ${order.id}.`,
+    });
+
+    // Stage 2: Worker Claim & Lease Fencing
+    if (incident.leaseOwner) {
+      stages.push({
+        stepNumber: 2,
+        title: 'Claimed by Recovery Worker',
+        badgeLabel: 'WORKER LEASE',
+        status: incident.status === 'INVESTIGATING' ? 'IN_PROGRESS' : 'COMPLETED',
+        description: `Exclusive lease held by worker "${incident.leaseOwner}" under monotonic fencing token #${incident.fencingToken}.`,
+      });
+    } else if (incident.fencingToken > 0 || incident.status !== 'OPEN') {
+      stages.push({
+        stepNumber: 2,
+        title: 'Fencing Token Assigned',
+        badgeLabel: 'FENCING',
+        status: 'COMPLETED',
+        description: `Fencing token #${incident.fencingToken} assigned for distributed execution safety.`,
+      });
+    } else {
+      stages.push({
+        stepNumber: 2,
+        title: 'Awaiting Worker Claim',
+        badgeLabel: 'QUEUED',
+        status: 'PENDING',
+        description: 'Incident is queued in database, awaiting worker lease acquisition.',
+      });
+    }
+
+    // Stage 3: Autonomous Investigation & Intent
+    if (incident.lastDecision) {
+      stages.push({
+        stepNumber: 3,
+        title: `Investigator Decision: ${incident.lastDecision}`,
+        badgeLabel: incident.lastDecision === 'ESCALATE' ? 'ESCALATE' : 'DECISION',
+        status: incident.lastDecision === 'ESCALATE' ? 'REJECTED' : 'COMPLETED',
+        description: 'Claude Sonnet 4.6 (LiteLLM) concluded evidence analysis and emitted structured intent.',
+        callout: incident.decisionSummary ? (
+          <div className="p-3 rounded-lg bg-muted/60 border border-border text-xs text-foreground/90 font-sans leading-relaxed">
+            {incident.decisionSummary}
+          </div>
+        ) : undefined,
+      });
+    } else if (incident.status === 'INVESTIGATING') {
+      stages.push({
+        stepNumber: 3,
+        title: 'Autonomous Investigation in Progress',
+        badgeLabel: 'IN PROGRESS',
+        status: 'IN_PROGRESS',
+        description: 'Worker is actively querying read-only Paystack and database tools. Final decision not yet recorded.',
+      });
+    } else if (incident.status === 'ESCALATED') {
+      stages.push({
+        stepNumber: 3,
+        title: 'Safety Violation Escalated',
+        badgeLabel: 'ESCALATED',
+        status: 'REJECTED',
+        description: incident.errorDetail || 'Underpaid transaction or identity mismatch identified.',
+      });
+    } else {
+      stages.push({
+        stepNumber: 3,
+        title: 'Investigation Pending',
+        badgeLabel: 'PENDING',
+        status: 'PENDING',
+        description: 'Investigation has not yet executed.',
+      });
+    }
+
+    // Stage 4: Deterministic Authorization Gate
+    if (evidenceDossier.gateAuthorized) {
+      stages.push({
+        stepNumber: 4,
+        title: 'Deterministic Gate: Authorized',
+        badgeLabel: 'GATE PASSED',
+        status: 'COMPLETED',
+        description: 'Mathematical equality verified: amount, currency, and customer strictly matched trusted order.',
+      });
+    } else if (incident.status === 'ESCALATED') {
+      stages.push({
+        stepNumber: 4,
+        title: 'Deterministic Gate: Rejected / Blocked',
+        badgeLabel: 'GATE REJECTED',
+        status: 'REJECTED',
+        description: incident.errorDetail || 'Security invariants failed. Recovery strictly blocked by authorization gate.',
+      });
+    } else if (incident.status === 'INVESTIGATING') {
+      stages.push({
+        stepNumber: 4,
+        title: 'Deterministic Gate: Awaiting Evaluation',
+        badgeLabel: 'GATE PENDING',
+        status: 'PENDING',
+        description: 'Gate evaluation blocked until agent investigation outputs a verified proposal.',
+      });
+    } else {
+      stages.push({
+        stepNumber: 4,
+        title: 'Deterministic Gate: Not Reached',
+        badgeLabel: 'PENDING',
+        status: 'PENDING',
+        description: 'Awaiting prior investigation stages before evaluation.',
+      });
+    }
+
+    // Stage 5: Entitlement Provisioning
+    if (entitlement && entitlement.isActive) {
+      stages.push({
+        stepNumber: 5,
+        title: 'Entitlement Active & Independently Confirmed',
+        badgeLabel: 'ACTIVE',
+        status: 'COMPLETED',
+        description: `Entitlement ${entitlement.id} confirmed active in database. Fresh read independently verified.`,
+      });
+    } else if (entitlement) {
+      stages.push({
+        stepNumber: 5,
+        title: 'Entitlement Created (Pending Activation)',
+        badgeLabel: 'PROVISIONED',
+        status: 'IN_PROGRESS',
+        description: `Entitlement ${entitlement.id} created, awaiting independent query confirmation.`,
+      });
+    } else if (incident.status === 'ESCALATED') {
+      stages.push({
+        stepNumber: 5,
+        title: 'Zero Entitlements Provisioned',
+        badgeLabel: 'BLOCKED',
+        status: 'BLOCKED',
+        description: 'Relational safety guarantee: zero database records created in entitlements table.',
+      });
+    } else {
+      stages.push({
+        stepNumber: 5,
+        title: 'Entitlement Provisioning: Pending',
+        badgeLabel: 'PENDING',
+        status: 'PENDING',
+        description: 'No entitlement provisioned at this stage.',
+      });
+    }
+
+    // Stage 6: Final Resolution State
+    if (incident.status === 'RESOLVED') {
+      stages.push({
+        stepNumber: 6,
+        title: 'Incident Resolved & Lease Released',
+        badgeLabel: 'RESOLVED',
+        status: 'COMPLETED',
+        timestamp: incident.resolvedAt ? new Date(incident.resolvedAt).toLocaleTimeString() : null,
+        description: 'Recovery complete. State verified and worker lease cleanly released.',
+      });
+    } else if (incident.status === 'ESCALATED') {
+      stages.push({
+        stepNumber: 6,
+        title: 'Incident Escalated for Human Review',
+        badgeLabel: 'ESCALATED',
+        status: 'REJECTED',
+        description: 'Safety gate intervened. Awaiting manual operator inspection.',
+      });
+    } else if (incident.status === 'PROVISIONED') {
+      stages.push({
+        stepNumber: 6,
+        title: 'State: Provisioned',
+        badgeLabel: 'PROVISIONED',
+        status: 'IN_PROGRESS',
+        description: 'State transition committed; awaiting final independent verification sweep.',
+      });
+    } else if (incident.status === 'INVESTIGATING') {
+      stages.push({
+        stepNumber: 6,
+        title: 'State: Actively Investigating',
+        badgeLabel: 'INVESTIGATING',
+        status: 'IN_PROGRESS',
+        description: 'Active investigation underway. Final resolution pending.',
+      });
+    } else {
+      stages.push({
+        stepNumber: 6,
+        title: 'State: Open',
+        badgeLabel: 'OPEN',
+        status: 'PENDING',
+        description: 'Queued for reconciliation sweep or worker claim.',
+      });
+    }
+
+    return stages;
+  }
+
+  const timelineStages = data ? buildTruthfulTimeline(data) : [];
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/45 backdrop-blur-xs animate-in fade-in duration-150 overflow-y-auto">
-      <div className="w-full max-w-4xl my-auto max-h-[90vh] flex flex-col">
-        <div className="rounded-2xl bg-white border border-[#E5E7EB] shadow-2xl overflow-hidden max-h-[88vh] flex flex-col">
-          {/* Modal Header */}
-          <div className="p-5 border-b border-[#E5E7EB] bg-white flex items-start justify-between gap-4 shrink-0">
-            <div className="space-y-1.5 min-w-0">
-              <div className="flex items-center gap-2.5 flex-wrap">
-                <span className="text-base font-bold text-[#171B23] font-mono tracking-tight">
+    <Dialog open={Boolean(incidentId)} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="max-w-4xl max-h-[90vh] p-0 overflow-hidden flex flex-col" onClose={onClose}>
+        {/* Header */}
+        <DialogHeader className="p-5 border-b border-border bg-card shrink-0">
+          <div className="flex items-start justify-between gap-3">
+            <div className="space-y-1.5 min-w-0 pr-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <DialogTitle className="text-sm sm:text-base font-bold font-mono tracking-tight text-foreground truncate max-w-[210px] sm:max-w-none">
                   {incidentId}
-                </span>
-                <button
-                  onClick={() => copyText(incidentId)}
-                  className="text-[#9CA3AF] hover:text-[#171B23] p-1 rounded transition-colors cursor-pointer"
-                  title="Copy Incident ID"
-                >
-                  <CopyIcon size={13} />
-                </button>
+                </DialogTitle>
+                {incidentId && (
+                  <button
+                    onClick={() => copyText(incidentId)}
+                    className="text-muted-foreground hover:text-foreground p-1 rounded transition-colors cursor-pointer shrink-0"
+                    title="Copy Incident ID"
+                    aria-label="Copy Incident ID"
+                  >
+                    <CopyIcon size={13} />
+                  </button>
+                )}
                 {copiedText === incidentId && (
-                  <span className="text-[11px] font-mono text-emerald-600 font-medium">Copied</span>
+                  <span className="text-[11px] font-mono text-emerald-600 font-medium shrink-0">Copied</span>
                 )}
                 {data && (
                   <StatusBadge
@@ -105,506 +325,368 @@ export function IncidentDetailModal({
               </div>
 
               {data && (
-                <div className="flex items-center gap-2 text-xs font-mono text-[#69717C] flex-wrap pt-0.5">
-                  <span className="bg-[#F4F4F5] px-2 py-0.5 rounded border border-[#E5E7EB] text-[#171B23]">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap pt-0.5">
+                  <span className="bg-muted px-2 py-0.5 rounded border border-border text-foreground font-mono">
                     Order: {data.order.id}
                   </span>
-                  <span className="bg-[#F4F4F5] px-2 py-0.5 rounded border border-[#E5E7EB]">
+                  <span className="bg-muted px-2 py-0.5 rounded border border-border font-mono">
                     Ref: {data.incident.paymentReference}
                   </span>
-                  <span className="bg-[#F4F4F5] px-2 py-0.5 rounded border border-[#E5E7EB]">
+                  <span className="bg-muted px-2 py-0.5 rounded border border-border font-mono">
                     Fencing: #{data.incident.fencingToken}
                   </span>
-                  <span className="bg-[#F4F4F5] px-2 py-0.5 rounded border border-[#E5E7EB]">
+                  <span className="bg-muted px-2 py-0.5 rounded border border-border font-mono">
                     Retries: {data.incident.retryCount}/5
                   </span>
                 </div>
               )}
             </div>
 
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                onClick={onClose}
-                className="text-[#9CA3AF] hover:text-[#171B23] p-1.5 rounded-lg hover:bg-[#F3F4F6] transition-colors cursor-pointer"
-                title="Close (Esc)"
-              >
-                <XIcon size={18} />
-              </button>
+            <DialogClose className="shrink-0 -mt-0.5" />
+          </div>
+        </DialogHeader>
+
+        {/* Tab Navigation */}
+        <div
+          role="tablist"
+          aria-label="Incident dossier views"
+          className="flex items-center px-5 border-b border-border bg-muted/30 text-xs font-medium shrink-0"
+        >
+          <button
+            role="tab"
+            aria-selected={activeTab === 'timeline'}
+            onClick={() => setActiveTab('timeline')}
+            className={`py-3 px-3 border-b-2 transition-all cursor-pointer ${
+              activeTab === 'timeline'
+                ? 'border-foreground text-foreground font-semibold'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            Authoritative Timeline
+          </button>
+          <button
+            role="tab"
+            aria-selected={activeTab === 'evidence'}
+            onClick={() => setActiveTab('evidence')}
+            className={`py-3 px-3 border-b-2 transition-all cursor-pointer ${
+              activeTab === 'evidence'
+                ? 'border-foreground text-foreground font-semibold'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            Evidence & Verification Dossier
+          </button>
+        </div>
+
+        {/* Content Scroll Area */}
+        <div className="p-6 overflow-y-auto space-y-6 flex-1 bg-card">
+          {isLoading ? (
+            <div className="py-20 text-center space-y-3">
+              <span className="size-6 border-2 border-border border-t-primary rounded-full animate-spin inline-block" />
+              <p className="text-xs text-muted-foreground">Loading authoritative incident record...</p>
             </div>
-          </div>
-
-          {/* Subheader Navigation Tabs */}
-          <div className="flex items-center px-5 border-b border-[#E5E7EB] bg-[#FAFBFD] text-xs font-medium shrink-0">
-            <button
-              onClick={() => setActiveTab('timeline')}
-              className={`py-3 px-3 border-b-2 transition-all font-mono cursor-pointer ${
-                activeTab === 'timeline'
-                  ? 'border-[#171B23] text-[#171B23] font-semibold'
-                  : 'border-transparent text-[#69717C] hover:text-[#171B23]'
-              }`}
-            >
-              10-Step Investigation Narrative
-            </button>
-            <button
-              onClick={() => setActiveTab('evidence')}
-              className={`py-3 px-3 border-b-2 transition-all font-mono cursor-pointer ${
-                activeTab === 'evidence'
-                  ? 'border-[#171B23] text-[#171B23] font-semibold'
-                  : 'border-transparent text-[#69717C] hover:text-[#171B23]'
-              }`}
-            >
-              Authoritative Evidence Panel
-            </button>
-          </div>
-
-          {/* Modal Content Scroll Area */}
-          <div className="p-6 overflow-y-auto space-y-6 bg-white flex-1">
-            {isLoading ? (
-              <div className="py-20 text-center space-y-3">
-                <span className="w-6 h-6 border-2 border-[#D1D5DB] border-t-[#44647B] rounded-full animate-spin inline-block" />
-                <p className="text-xs text-[#69717C] font-mono">Loading authoritative incident record...</p>
+          ) : error ? (
+            <div className="py-16 text-center text-rose-600 text-xs font-medium">{error}</div>
+          ) : !data ? (
+            <div className="py-16 text-center text-muted-foreground text-xs">No data available</div>
+          ) : activeTab === 'timeline' ? (
+            /* Truthful Timeline */
+            <div className="space-y-6">
+              <div className="space-y-1">
+                <h3 className="text-sm font-semibold text-foreground">
+                  Actual Incident Progression
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  Each milestone reflects verified database and telemetry records. Future or unexecuted stages are marked pending.
+                </p>
               </div>
-            ) : error ? (
-              <div className="py-16 text-center text-rose-600 text-xs font-medium">{error}</div>
-            ) : !data ? (
-              <div className="py-16 text-center text-[#69717C] text-xs">No data available</div>
-            ) : activeTab === 'timeline' ? (
-              /* Chronological 10-Step Investigation Narrative */
-              <div className="space-y-6">
-                <div className="space-y-1">
-                  <h3 className="text-sm font-semibold text-[#171B23]">
-                    Chronological Autonomous Resolution Story
-                  </h3>
-                  <p className="text-xs text-[#69717C]">
-                    Verifiable lifecycle from initial discrepancy detection through deterministic gate authorization and independent confirmation.
-                  </p>
-                </div>
 
-                <div className="relative pl-6 space-y-7 before:absolute before:left-2 before:top-2 before:bottom-2 before:w-0.5 before:bg-[#E5E7EB]">
-                  {/* Step 1: Incident Detected */}
-                  <div className="relative">
-                    <div className="absolute -left-[27px] top-0.5 w-4 h-4 rounded-full bg-white border-2 border-sky-500 flex items-center justify-center" />
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-mono font-semibold text-[#171B23]">
-                          Step 1: Incident Detected
-                        </span>
-                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200">
-                          DETECTION
-                        </span>
-                        <span className="text-[11px] font-mono text-[#69717C] ml-auto tabular-nums">
-                          {new Date(data.incident.createdAt).toLocaleTimeString()}
-                        </span>
-                      </div>
-                      <p className="text-xs text-[#4B5563]">
-                        Discrepancy registered with reason: <code className="text-[#171B23] bg-[#F4F4F5] px-1 rounded">{data.incident.reason}</code>. Order {data.order.id} flagged in recovery sweep.
-                      </p>
-                    </div>
-                  </div>
+              <div className="relative pl-6 space-y-7 before:absolute before:left-2 before:top-2 before:bottom-2 before:w-0.5 before:bg-border">
+                {timelineStages.map((st) => {
+                  let dotColor = 'border-border bg-card';
+                  let badgeColor = 'bg-muted text-muted-foreground border-border';
 
-                  {/* Step 2: Payment/Order Discrepancy Identified */}
-                  <div className="relative">
-                    <div className="absolute -left-[27px] top-0.5 w-4 h-4 rounded-full bg-white border-2 border-amber-500 flex items-center justify-center" />
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-mono font-semibold text-[#171B23]">
-                          Step 2: Discrepancy Identified
-                        </span>
-                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">
-                          STATE GAP
-                        </span>
-                      </div>
-                      <p className="text-xs text-[#4B5563]">
-                        Customer completed payment, but relational entitlement table contained 0 active rows for plan <code className="text-[#171B23] bg-[#F4F4F5] px-1 rounded">{data.plan.name}</code>.
-                      </p>
-                    </div>
-                  </div>
+                  if (st.status === 'COMPLETED') {
+                    dotColor = 'border-emerald-600 bg-emerald-50';
+                    badgeColor = 'bg-emerald-50 text-emerald-700 border-emerald-200';
+                  } else if (st.status === 'IN_PROGRESS') {
+                    dotColor = 'border-amber-600 bg-amber-50';
+                    badgeColor = 'bg-amber-50 text-amber-800 border-amber-200';
+                  } else if (st.status === 'REJECTED') {
+                    dotColor = 'border-rose-600 bg-rose-50';
+                    badgeColor = 'bg-rose-50 text-rose-700 border-rose-200';
+                  } else if (st.status === 'BLOCKED') {
+                    dotColor = 'border-border bg-muted';
+                    badgeColor = 'bg-muted text-muted-foreground border-border';
+                  }
 
-                  {/* Step 3: Agent Investigation Started */}
-                  <div className="relative">
-                    <div className="absolute -left-[27px] top-0.5 w-4 h-4 rounded-full bg-white border-2 border-indigo-500 flex items-center justify-center" />
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-mono font-semibold text-[#171B23]">
-                          Step 3: Autonomous Investigation Started
-                        </span>
-                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
-                          AI INVESTIGATOR
-                        </span>
-                      </div>
-                      <p className="text-xs text-[#4B5563]">
-                        Autonomous agent claimed incident with fencing token #{data.incident.fencingToken}. Runtime model: <code className="text-[#171B23] bg-[#F4F4F5] px-1 rounded">Claude Sonnet 4.6</code> via neatHack LiteLLM gateway.
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Step 4: Model-Selected Tools */}
-                  <div className="relative">
-                    <div className="absolute -left-[27px] top-0.5 w-4 h-4 rounded-full bg-white border-2 border-teal-500 flex items-center justify-center" />
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-mono font-semibold text-[#171B23]">
-                          Step 4: Model-Selected Read-Only Tools
-                        </span>
-                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-teal-50 text-teal-700 border border-teal-200">
-                          TOOL CALLS
-                        </span>
-                      </div>
-                      <p className="text-xs text-[#4B5563]">
-                        Agent dynamically requested read-only fact-finding tools:
-                      </p>
-                      <div className="flex flex-wrap gap-1.5 pt-1">
-                        {['inspect_order', 'inspect_payment_evidence', 'verify_paystack_transaction', 'inspect_entitlement'].map((tool) => (
+                  return (
+                    <div key={st.stepNumber} className="relative">
+                      <div
+                        className={`absolute -left-[27px] top-0.5 size-4 rounded-full border-2 ${dotColor} flex items-center justify-center`}
+                      />
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-semibold text-foreground">
+                            Step {st.stepNumber}: {st.title}
+                          </span>
                           <span
-                            key={tool}
-                            className="text-[11px] font-mono px-2 py-0.5 rounded bg-[#F4F4F5] text-[#171B23] border border-[#E5E7EB]"
+                            className={`text-[10px] font-mono px-2 py-0.5 rounded border ${badgeColor}`}
                           >
-                            {tool}()
+                            {st.badgeLabel}
                           </span>
-                        ))}
+                          {st.timestamp && (
+                            <span className="text-[11px] font-mono text-muted-foreground ml-auto tabular-nums">
+                              {st.timestamp}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground leading-relaxed">
+                          {st.description}
+                        </p>
+                        {st.callout}
                       </div>
                     </div>
-                  </div>
-
-                  {/* Step 5: Observed Authoritative Evidence */}
-                  <div className="relative">
-                    <div className="absolute -left-[27px] top-0.5 w-4 h-4 rounded-full bg-white border-2 border-slate-500 flex items-center justify-center" />
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-mono font-semibold text-[#171B23]">
-                          Step 5: Authoritative Evidence Gathered
-                        </span>
-                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200">
-                          EVIDENCE DOSSIER
-                        </span>
-                      </div>
-                      <p className="text-xs text-[#4B5563]">
-                        Evidence confirmed: Expected amount {data.order.expectedAmount} kobo ({data.order.currency}), customer {data.customer.emailRedacted}, reference {data.incident.paymentReference}.
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Step 6: Structured Agent Decision */}
-                  <div className="relative">
-                    <div className="absolute -left-[27px] top-0.5 w-4 h-4 rounded-full bg-white border-2 border-purple-500 flex items-center justify-center" />
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-mono font-semibold text-[#171B23]">
-                          Step 6: Structured Agent Intent Emitted
-                        </span>
-                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200">
-                          {data.incident.lastDecision || 'PROPOSE_RECOVERY'}
-                        </span>
-                      </div>
-                      <div className="p-3 rounded-xl bg-[#FAFBFD] border border-[#E5E7EB] text-xs text-[#374151] font-sans leading-relaxed">
-                        {data.incident.decisionSummary ||
-                          'Agent concluded that verified payment strictly matches trusted order and proposed entitlement recovery.'}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Step 7: Deterministic Authorization Gate */}
-                  <div className="relative">
-                    <div className="absolute -left-[27px] top-0.5 w-4 h-4 rounded-full bg-white border-2 border-emerald-500 flex items-center justify-center" />
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-mono font-semibold text-[#171B23]">
-                          Step 7: Deterministic Authorization Gate
-                        </span>
-                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
-                          GUARDRAIL
-                        </span>
-                      </div>
-                      <p className="text-xs text-[#4B5563]">
-                        Zero LLM mutation trust boundary: 7 deterministic policy rules evaluated against authoritative records. Status: <span className="text-emerald-700 font-semibold font-mono">AUTHORIZED</span>.
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Step 8: Provisioning / Reconciliation Mutation */}
-                  <div className="relative">
-                    <div className="absolute -left-[27px] top-0.5 w-4 h-4 rounded-full bg-white border-2 border-sky-500 flex items-center justify-center" />
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-mono font-semibold text-[#171B23]">
-                          Step 8: State Mutation Committed (PROVISIONED)
-                        </span>
-                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200">
-                          DATABASE ATOMIC
-                        </span>
-                      </div>
-                      <p className="text-xs text-[#4B5563]">
-                        Entitlement {data.entitlement?.id || 'provisioned'} created with DB uniqueness constraint. Order updated to FULFILLED. Incident transitioned to intermediate durable state <code className="text-[#171B23] font-mono bg-[#F4F4F5] px-1 rounded">PROVISIONED</code>.
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Step 9: Independent Entitlement Verification */}
-                  <div className="relative">
-                    <div className="absolute -left-[27px] top-0.5 w-4 h-4 rounded-full bg-white border-2 border-emerald-500 flex items-center justify-center" />
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-mono font-semibold text-[#171B23]">
-                          Step 9: Independent Resolution Verification
-                        </span>
-                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
-                          INDEPENDENT READ
-                        </span>
-                      </div>
-                      <p className="text-xs text-[#4B5563]">
-                        Fresh query directly against database verified exact customer, plan, source reference, and ACTIVE duration. Insertion alone was not accepted as proof.
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Step 10: Final Verified Resolution */}
-                  <div className="relative">
-                    <div className="absolute -left-[27px] top-0.5 w-4 h-4 rounded-full bg-white border-2 border-emerald-500 flex items-center justify-center" />
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-mono font-semibold text-[#171B23]">
-                          Step 10: Verified Resolution & Lease Released
-                        </span>
-                        <StatusBadge status={data.incident.status} />
-                        {data.incident.resolvedAt && (
-                          <span className="text-[11px] font-mono text-[#69717C] ml-auto tabular-nums">
-                            {new Date(data.incident.resolvedAt).toLocaleTimeString()}
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-xs text-[#4B5563]">
-                        Resolution conditionally committed under fencing lock. Audit event <code className="text-[#171B23] bg-[#F4F4F5] px-1 rounded">INCIDENT_RESOLVED</code> recorded.
-                      </p>
-                    </div>
-                  </div>
-                </div>
+                  );
+                })}
               </div>
-            ) : (
-              /* Authoritative Evidence Panel */
-              <div className="space-y-6">
-                <div className="space-y-1">
-                  <h3 className="text-sm font-semibold text-[#171B23]">
-                    Authoritative Recovery Evidence
-                  </h3>
-                  <p className="text-xs text-[#69717C]">
-                    Ground-truth comparisons verified by the deterministic authorization service before any mutation.
-                  </p>
-                </div>
 
-                {/* Evidence Comparison Table */}
-                <div className="rounded-xl border border-[#E5E7EB] overflow-hidden bg-white shadow-xs">
-                  <table className="w-full text-left text-xs border-collapse">
-                    <thead>
-                      <tr className="border-b border-[#E5E7EB] bg-[#F9FAFB] text-[11px] font-mono uppercase text-[#69717C]">
-                        <th className="p-3 px-4 font-medium">Verification Check</th>
-                        <th className="p-3 px-4 font-medium">Expected (Order)</th>
-                        <th className="p-3 px-4 font-medium">Verified (Payment)</th>
-                        <th className="p-3 px-4 text-right font-medium">Result</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[#F3F4F6] font-mono">
-                      <tr>
-                        <td className="p-3 px-4 text-[#374151]">Amount (Minor Units)</td>
-                        <td className="p-3 px-4 text-[#171B23] tabular-nums">{data.evidenceDossier.amountExpected.toLocaleString()} kobo</td>
-                        <td className="p-3 px-4 text-[#171B23] tabular-nums">
-                          {data.evidenceDossier.amountVerified !== null
-                            ? `${data.evidenceDossier.amountVerified.toLocaleString()} kobo`
-                            : 'Pending / Unverified'}
-                        </td>
-                        <td className="p-3 px-4 text-right">
-                          <span
-                            className={`inline-block px-2 py-0.5 rounded text-[10px] font-semibold ${
-                              data.evidenceDossier.amountMatched === 'VERIFIED'
-                                ? 'text-emerald-700 bg-emerald-50 border border-emerald-200'
-                                : data.evidenceDossier.amountMatched === 'MISMATCH'
-                                ? 'text-rose-700 bg-rose-50 border border-rose-200'
-                                : 'text-zinc-600 bg-zinc-100 border border-zinc-200'
-                            }`}
-                          >
-                            {data.evidenceDossier.amountMatched === 'VERIFIED'
-                              ? 'RECORDED MATCH'
-                              : data.evidenceDossier.amountMatched === 'MISMATCH'
-                              ? 'RECORDED MISMATCH'
-                              : 'UNRECORDED'}
-                          </span>
-                        </td>
-                      </tr>
-                      <tr>
-                        <td className="p-3 px-4 text-[#374151]">Currency Code</td>
-                        <td className="p-3 px-4 text-[#171B23]">{data.evidenceDossier.currencyExpected}</td>
-                        <td className="p-3 px-4 text-[#171B23]">
-                          {data.evidenceDossier.currencyVerified || 'Pending / Unverified'}
-                        </td>
-                        <td className="p-3 px-4 text-right">
-                          <span
-                            className={`inline-block px-2 py-0.5 rounded text-[10px] font-semibold ${
-                              data.evidenceDossier.currencyMatched === 'VERIFIED'
-                                ? 'text-emerald-700 bg-emerald-50 border border-emerald-200'
-                                : data.evidenceDossier.currencyMatched === 'MISMATCH'
-                                ? 'text-rose-700 bg-rose-50 border border-rose-200'
-                                : 'text-zinc-600 bg-zinc-100 border border-zinc-200'
-                            }`}
-                          >
-                            {data.evidenceDossier.currencyMatched === 'VERIFIED'
-                              ? 'RECORDED MATCH'
-                              : data.evidenceDossier.currencyMatched === 'MISMATCH'
-                              ? 'RECORDED MISMATCH'
-                              : 'UNRECORDED'}
-                          </span>
-                        </td>
-                      </tr>
-                      <tr>
-                        <td className="p-3 px-4 text-[#374151]">Customer Identity</td>
-                        <td className="p-3 px-4 text-[#171B23]">{data.evidenceDossier.customerExpected}</td>
-                        <td className="p-3 px-4 text-[#171B23]">
-                          {data.evidenceDossier.customerVerified || 'Pending / Unverified'}
-                        </td>
-                        <td className="p-3 px-4 text-right">
-                          <span
-                            className={`inline-block px-2 py-0.5 rounded text-[10px] font-semibold ${
-                              data.evidenceDossier.customerMatched === 'VERIFIED'
-                                ? 'text-emerald-700 bg-emerald-50 border border-emerald-200'
-                                : data.evidenceDossier.customerMatched === 'MISMATCH'
-                                ? 'text-rose-700 bg-rose-50 border border-rose-200'
-                                : 'text-zinc-600 bg-zinc-100 border border-zinc-200'
-                            }`}
-                          >
-                            {data.evidenceDossier.customerMatched === 'VERIFIED'
-                              ? 'RECORDED MATCH'
-                              : data.evidenceDossier.customerMatched === 'MISMATCH'
-                              ? 'RECORDED MISMATCH'
-                              : 'UNRECORDED'}
-                          </span>
-                        </td>
-                      </tr>
-                      <tr>
-                        <td className="p-3 px-4 text-[#374151]">Transaction Reference</td>
-                        <td className="p-3 px-4 text-[#171B23] truncate max-w-[140px]">{data.order.paymentReference}</td>
-                        <td className="p-3 px-4 text-[#171B23] truncate max-w-[140px]">
-                          {data.paymentEvents.length > 0
-                            ? data.paymentEvents[0].paymentReference
-                            : data.incident.paymentReference}
-                        </td>
-                        <td className="p-3 px-4 text-right">
-                          <span className="inline-block px-2 py-0.5 rounded text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200">
-                            {data.paymentEvents.length > 0 &&
-                            data.paymentEvents[0].paymentReference === data.order.paymentReference
-                              ? 'RECORDED MATCH'
-                              : 'BOUND (Order)'}
-                          </span>
-                        </td>
-                      </tr>
-                      <tr>
-                        <td className="p-3 px-4 text-[#374151]">Active Entitlement</td>
-                        <td className="p-3 px-4 text-[#171B23]">{data.plan.name}</td>
-                        <td className="p-3 px-4 text-[#171B23]">{data.entitlement?.id || 'Missing initially'}</td>
-                        <td className="p-3 px-4 text-right">
-                          <span
-                            className={`inline-block px-2 py-0.5 rounded text-[10px] font-semibold ${
-                              data.entitlement?.isActive
-                                ? 'text-emerald-700 bg-emerald-50 border border-emerald-200'
-                                : data.entitlement
-                                ? 'text-sky-700 bg-sky-50 border border-sky-200'
-                                : 'text-amber-800 bg-amber-50 border border-amber-200'
-                            }`}
-                          >
-                            {data.entitlement?.isActive
-                              ? 'CONFIRMED ACTIVE'
-                              : data.entitlement
-                              ? 'PROVISIONED'
-                              : 'NOT FOUND'}
-                          </span>
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Observability & Neatlogs Trace Card */}
-                <div className="rounded-xl border border-[#E5E7EB] p-4 bg-[#FAFBFD] space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <ActivityIcon size={14} className="text-[#69717C]" />
-                      <span className="text-xs font-semibold uppercase tracking-wider text-[#171B23] font-mono">
-                        neatlogs Telemetry Trace
-                      </span>
-                    </div>
-                    <span
-                      className={`text-[10px] font-mono px-2 py-0.5 rounded ${
-                        data.evidenceDossier.paymentVerificationState === 'PROVIDER_VERIFIED'
-                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                          : data.evidenceDossier.paymentVerificationState === 'WEBHOOK_OBSERVED'
-                          ? 'bg-sky-50 text-sky-700 border border-sky-200'
-                          : data.evidenceDossier.paymentVerificationState === 'SIMULATED_FIXTURE'
-                          ? 'bg-purple-50 text-purple-700 border border-purple-200'
-                          : data.evidenceDossier.paymentVerificationState === 'VERIFICATION_FAILED'
-                          ? 'bg-rose-50 text-rose-700 border border-rose-200'
-                          : 'bg-zinc-100 text-zinc-600 border border-zinc-200'
-                      }`}
-                    >
-                      {data.evidenceDossier.paymentVerificationState}
-                    </span>
-                  </div>
-
-                  <div className="space-y-1 font-mono text-xs">
-                    <div className="flex items-center justify-between text-[#69717C]">
-                      <span>Trace ID:</span>
-                      <span className="text-[#171B23] font-semibold">
-                        {data.neatlogsTrace.traceId || 'None recorded (local/simulated)'}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between text-[#69717C]">
-                      <span>Workflow:</span>
-                      <span className="text-[#171B23]">{data.neatlogsTrace.workflowName}</span>
-                    </div>
-                  </div>
-
-                  {data.neatlogsTrace.traceUrl ? (
-                    <div className="pt-2 border-t border-[#E5E7EB] flex items-center justify-end">
-                      <a
-                        href={data.neatlogsTrace.traceUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1.5 text-xs text-[#44647B] hover:text-[#171B23] transition-colors font-mono font-medium"
-                      >
-                        <span>Inspect in neatlogs Dashboard</span>
-                        <ExternalLinkIcon size={12} />
-                      </a>
-                    </div>
-                  ) : (
-                    <div className="pt-2 border-t border-[#E5E7EB] flex items-center justify-between text-[11px] text-[#69717C] font-mono">
-                      <span>Remote trace:</span>
-                      <span>No remote ingest link captured</span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Audit Trail List */}
-                <div className="space-y-2">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-[#69717C] font-mono">
-                    Persisted Audit Events ({data.auditTrail.length})
+              {/* Persisted Audit Log Sub-Trail */}
+              <div className="pt-4 border-t border-border space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-foreground">
+                    Persisted Audit Event Trail ({data.auditTrail.length})
                   </span>
-                  <div className="rounded-xl border border-[#E5E7EB] divide-y divide-[#F3F4F6] bg-white">
+                  <span className="text-[11px] text-muted-foreground font-mono">Authoritative DB Records</span>
+                </div>
+
+                {data.auditTrail.length === 0 ? (
+                  <div className="p-4 rounded-xl border border-border text-xs text-muted-foreground text-center">
+                    No audit records registered yet for this incident.
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-border divide-y divide-border/60 overflow-hidden bg-card">
                     {data.auditTrail.map((log) => (
-                      <div key={log.id} className="p-3 px-4 flex items-center justify-between gap-2 text-xs">
+                      <div key={log.id} className="p-3 px-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
                         <div className="flex items-center gap-3 min-w-0">
-                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#F4F4F5] text-[#171B23] border border-[#E5E7EB] shrink-0">
+                          <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded bg-muted text-foreground border border-border shrink-0">
                             {log.action}
                           </span>
-                          <span className="text-[#374151] truncate">{log.details}</span>
+                          <span className="text-foreground/90 truncate">{log.details || 'No details'}</span>
                         </div>
-                        <span className="text-[11px] font-mono text-[#69717C] shrink-0 tabular-nums">
-                          {new Date(log.createdAt).toLocaleTimeString()}
-                        </span>
+                        <div className="flex items-center gap-3 text-[11px] font-mono text-muted-foreground shrink-0">
+                          <span>{log.actor}</span>
+                          <span className="tabular-nums">{new Date(log.createdAt).toLocaleTimeString()}</span>
+                        </div>
                       </div>
                     ))}
                   </div>
-                </div>
+                )}
               </div>
-            )}
-          </div>
+            </div>
+          ) : (
+            /* Authoritative Evidence Panel */
+            <div className="space-y-6">
+              <div className="space-y-1">
+                <h3 className="text-sm font-semibold text-foreground">
+                  Authoritative Recovery Evidence
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  Ground-truth comparisons verified by the deterministic authorization service before any state mutation.
+                </p>
+              </div>
+
+              {/* Evidence Comparison Table */}
+              <div className="rounded-xl border border-border overflow-hidden bg-card shadow-xs">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/40 text-[11px] font-medium text-muted-foreground">
+                      <th className="p-3 px-4">Verification Check</th>
+                      <th className="p-3 px-4">Expected (Order)</th>
+                      <th className="p-3 px-4">Verified (Payment)</th>
+                      <th className="p-3 px-4 text-right">Result</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/60">
+                    <tr>
+                      <td className="p-3 px-4 text-foreground/90">Amount (Minor Units)</td>
+                      <td className="p-3 px-4 font-mono tabular-nums text-foreground">{data.evidenceDossier.amountExpected.toLocaleString()} kobo</td>
+                      <td className="p-3 px-4 font-mono tabular-nums text-foreground">
+                        {data.evidenceDossier.amountVerified !== null
+                          ? `${data.evidenceDossier.amountVerified.toLocaleString()} kobo`
+                          : 'Pending / Unverified'}
+                      </td>
+                      <td className="p-3 px-4 text-right">
+                        <span
+                          className={`inline-block px-2 py-0.5 rounded text-[10px] font-semibold ${
+                            data.evidenceDossier.amountMatched === 'VERIFIED'
+                              ? 'text-emerald-700 bg-emerald-50 border border-emerald-200'
+                              : data.evidenceDossier.amountMatched === 'MISMATCH'
+                              ? 'text-rose-700 bg-rose-50 border border-rose-200'
+                              : 'text-muted-foreground bg-muted border border-border'
+                          }`}
+                        >
+                          {data.evidenceDossier.amountMatched === 'VERIFIED'
+                            ? 'MATCH'
+                            : data.evidenceDossier.amountMatched === 'MISMATCH'
+                            ? 'MISMATCH'
+                            : 'UNRECORDED'}
+                        </span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="p-3 px-4 text-foreground/90">Currency Code</td>
+                      <td className="p-3 px-4 font-mono text-foreground">{data.evidenceDossier.currencyExpected}</td>
+                      <td className="p-3 px-4 font-mono text-foreground">
+                        {data.evidenceDossier.currencyVerified || 'Pending / Unverified'}
+                      </td>
+                      <td className="p-3 px-4 text-right">
+                        <span
+                          className={`inline-block px-2 py-0.5 rounded text-[10px] font-semibold ${
+                            data.evidenceDossier.currencyMatched === 'VERIFIED'
+                              ? 'text-emerald-700 bg-emerald-50 border border-emerald-200'
+                              : data.evidenceDossier.currencyMatched === 'MISMATCH'
+                              ? 'text-rose-700 bg-rose-50 border border-rose-200'
+                              : 'text-muted-foreground bg-muted border border-border'
+                          }`}
+                        >
+                          {data.evidenceDossier.currencyMatched === 'VERIFIED'
+                            ? 'MATCH'
+                            : data.evidenceDossier.currencyMatched === 'MISMATCH'
+                            ? 'MISMATCH'
+                            : 'UNRECORDED'}
+                        </span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="p-3 px-4 text-foreground/90">Customer Identity</td>
+                      <td className="p-3 px-4 font-mono text-foreground">{data.evidenceDossier.customerExpected}</td>
+                      <td className="p-3 px-4 font-mono text-foreground">
+                        {data.evidenceDossier.customerVerified || 'Pending / Unverified'}
+                      </td>
+                      <td className="p-3 px-4 text-right">
+                        <span
+                          className={`inline-block px-2 py-0.5 rounded text-[10px] font-semibold ${
+                            data.evidenceDossier.customerMatched === 'VERIFIED'
+                              ? 'text-emerald-700 bg-emerald-50 border border-emerald-200'
+                              : data.evidenceDossier.customerMatched === 'MISMATCH'
+                              ? 'text-rose-700 bg-rose-50 border border-rose-200'
+                              : 'text-muted-foreground bg-muted border border-border'
+                          }`}
+                        >
+                          {data.evidenceDossier.customerMatched === 'VERIFIED'
+                            ? 'MATCH'
+                            : data.evidenceDossier.customerMatched === 'MISMATCH'
+                            ? 'MISMATCH'
+                            : 'UNRECORDED'}
+                        </span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="p-3 px-4 text-foreground/90">Transaction Reference</td>
+                      <td className="p-3 px-4 font-mono text-foreground truncate max-w-[140px]">{data.order.paymentReference}</td>
+                      <td className="p-3 px-4 font-mono text-foreground truncate max-w-[140px]">
+                        {data.paymentEvents.length > 0
+                          ? data.paymentEvents[0].paymentReference
+                          : data.incident.paymentReference}
+                      </td>
+                      <td className="p-3 px-4 text-right">
+                        <span className="inline-block px-2 py-0.5 rounded text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200">
+                          {data.paymentEvents.length > 0 &&
+                          data.paymentEvents[0].paymentReference === data.order.paymentReference
+                            ? 'MATCH'
+                            : 'BOUND'}
+                        </span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="p-3 px-4 text-foreground/90">Active Entitlement</td>
+                      <td className="p-3 px-4 text-foreground">{data.plan.name}</td>
+                      <td className="p-3 px-4 font-mono text-foreground">{data.entitlement?.id || 'None'}</td>
+                      <td className="p-3 px-4 text-right">
+                        <span
+                          className={`inline-block px-2 py-0.5 rounded text-[10px] font-semibold ${
+                            data.entitlement?.isActive
+                              ? 'text-emerald-700 bg-emerald-50 border border-emerald-200'
+                              : data.entitlement
+                              ? 'text-sky-700 bg-sky-50 border border-sky-200'
+                              : 'text-amber-800 bg-amber-50 border border-amber-200'
+                          }`}
+                        >
+                          {data.entitlement?.isActive
+                            ? 'ACTIVE'
+                            : data.entitlement
+                            ? 'PROVISIONED'
+                            : 'NOT PROVISIONED'}
+                        </span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Observability & Neatlogs Trace Card */}
+              <div className="rounded-xl border border-border p-4 bg-muted/30 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <ActivityIcon size={14} className="text-muted-foreground" />
+                    <span className="text-xs font-semibold uppercase tracking-wider text-foreground font-mono">
+                      neatlogs Telemetry Trace
+                    </span>
+                  </div>
+                  <span
+                    className={`text-[10px] font-mono px-2 py-0.5 rounded ${
+                      data.evidenceDossier.paymentVerificationState === 'PROVIDER_VERIFIED'
+                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                        : data.evidenceDossier.paymentVerificationState === 'WEBHOOK_OBSERVED'
+                        ? 'bg-sky-50 text-sky-700 border border-sky-200'
+                        : data.evidenceDossier.paymentVerificationState === 'SIMULATED_FIXTURE'
+                        ? 'bg-purple-50 text-purple-700 border border-purple-200'
+                        : data.evidenceDossier.paymentVerificationState === 'VERIFICATION_FAILED'
+                        ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                        : 'bg-muted text-muted-foreground border border-border'
+                    }`}
+                  >
+                    {data.evidenceDossier.paymentVerificationState}
+                  </span>
+                </div>
+
+                <div className="space-y-1 font-mono text-xs">
+                  <div className="flex items-center justify-between text-muted-foreground">
+                    <span>Trace ID:</span>
+                    <span className="text-foreground font-semibold">
+                      {data.neatlogsTrace.traceId || 'None recorded (local/simulated)'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-muted-foreground">
+                    <span>Workflow:</span>
+                    <span className="text-foreground">{data.neatlogsTrace.workflowName}</span>
+                  </div>
+                </div>
+
+                {data.neatlogsTrace.traceUrl ? (
+                  <div className="pt-2 border-t border-border flex items-center justify-end">
+                    <a
+                      href={data.neatlogsTrace.traceUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline font-mono font-medium"
+                    >
+                      <span>Inspect in neatlogs Dashboard</span>
+                      <ExternalLinkIcon size={12} />
+                    </a>
+                  </div>
+                ) : (
+                  <div className="pt-2 border-t border-border flex items-center justify-between text-[11px] text-muted-foreground font-mono">
+                    <span>Remote trace:</span>
+                    <span>No remote ingest link captured</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
