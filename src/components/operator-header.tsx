@@ -2,7 +2,7 @@
 
 import React from 'react';
 import {
-  ShieldIcon,
+  AftermathLogo,
   LockIcon,
   UnlockIcon,
   RefreshCwIcon,
@@ -41,18 +41,13 @@ export function OperatorHeader({
           {/* Brand & Navigation */}
           <div className="flex items-center gap-2 sm:gap-6 min-w-0">
             {/* Logo */}
-            <div className="flex items-center gap-2 shrink-0">
-              <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary">
-                <ShieldIcon size={15} />
+            <div className="flex items-center gap-2.5 shrink-0">
+              <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shadow-2xs">
+                <AftermathLogo size={17} />
               </div>
-              <div className="hidden sm:flex items-center gap-1.5">
-                <span className="font-semibold text-sm tracking-tight text-foreground">
-                  Aftermath
-                </span>
-                <span className="hidden md:inline-block text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-muted text-muted-foreground border border-border">
-                  Console
-                </span>
-              </div>
+              <span className="font-semibold text-sm tracking-tight text-foreground">
+                Aftermath
+              </span>
             </div>
 
             {/* Navigation Tabs with accessible semantics */}

@@ -23,6 +23,11 @@ import {
   LockIcon,
   XIcon,
 } from './ui/icons';
+import {
+  AuditLogEntryCard,
+  FormattedInvestigationText,
+  FormattedInline,
+} from './ui/audit-formatters';
 
 interface IncidentDetailModalProps {
   incidentId: string | null;
@@ -184,8 +189,27 @@ export function buildTruthfulTimeline(view: IncidentDetailView): TimelineStage[]
         status: isEscalateDecision ? 'REJECTED' : 'COMPLETED',
         description: attributionText,
         callout: incident.decisionSummary ? (
-          <div className="p-3 rounded-lg bg-muted/60 border border-border text-xs text-foreground/90 font-sans leading-relaxed">
-            {incident.decisionSummary}
+          <div className="p-3.5 rounded-xl bg-card border border-border shadow-xs space-y-2.5">
+            <div className="flex items-center justify-between pb-2 border-b border-border">
+              <div className="flex items-center gap-2">
+                <ActivityIcon size={14} className="text-muted-foreground" />
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-foreground">
+                  Investigation Evidence Synthesis
+                </span>
+              </div>
+              <span
+                className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded border ${
+                  incident.lastDecision === 'PROPOSE_RECOVERY'
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    : incident.lastDecision === 'ESCALATE'
+                    ? 'bg-rose-50 text-rose-700 border-rose-200'
+                    : 'bg-muted text-foreground border-border'
+                }`}
+              >
+                {incident.lastDecision}
+              </span>
+            </div>
+            <FormattedInvestigationText text={incident.decisionSummary} />
           </div>
         ) : undefined,
       });
@@ -204,6 +228,22 @@ export function buildTruthfulTimeline(view: IncidentDetailView): TimelineStage[]
         badgeLabel: 'ESCALATED',
         status: 'REJECTED',
         description: incident.errorDetail || 'Escalation registered in database without recorded decision summary.',
+        callout: incident.decisionSummary ? (
+          <div className="p-3.5 rounded-xl bg-card border border-border shadow-xs space-y-2.5">
+            <div className="flex items-center justify-between pb-2 border-b border-border">
+              <div className="flex items-center gap-2">
+                <ActivityIcon size={14} className="text-muted-foreground" />
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-foreground">
+                  Escalation Evidence & Reasoning
+                </span>
+              </div>
+              <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded border bg-rose-50 text-rose-700 border-rose-200">
+                ESCALATE
+              </span>
+            </div>
+            <FormattedInvestigationText text={incident.decisionSummary} />
+          </div>
+        ) : undefined,
       });
     } else {
       stages.push({
@@ -573,20 +613,15 @@ export function IncidentDetailModal({
                 <div className="relative pl-6 space-y-7 before:absolute before:left-2 before:top-2 before:bottom-2 before:w-0.5 before:bg-border">
                   {timelineStages.map((st) => {
                     let dotColor = 'border-border bg-card';
-                    let badgeColor = 'bg-muted text-muted-foreground border-border';
 
                     if (st.status === 'COMPLETED') {
                       dotColor = 'border-emerald-600 bg-emerald-50';
-                      badgeColor = 'bg-emerald-50 text-emerald-700 border-emerald-200';
                     } else if (st.status === 'IN_PROGRESS') {
                       dotColor = 'border-amber-600 bg-amber-50';
-                      badgeColor = 'bg-amber-50 text-amber-800 border-amber-200';
                     } else if (st.status === 'REJECTED') {
                       dotColor = 'border-rose-600 bg-rose-50';
-                      badgeColor = 'bg-rose-50 text-rose-700 border-rose-200';
                     } else if (st.status === 'BLOCKED') {
                       dotColor = 'border-border bg-muted';
-                      badgeColor = 'bg-muted text-muted-foreground border-border';
                     }
 
                     return (
@@ -599,11 +634,6 @@ export function IncidentDetailModal({
                             <span className="text-xs font-semibold text-foreground">
                               Step {st.stepNumber}: {st.title}
                             </span>
-                            <span
-                              className={`text-[10px] font-mono px-2 py-0.5 rounded border ${badgeColor}`}
-                            >
-                              {st.badgeLabel}
-                            </span>
                             {st.timestamp && (
                               <span className="text-[11px] font-mono text-muted-foreground ml-auto tabular-nums">
                                 {st.timestamp}
@@ -611,7 +641,7 @@ export function IncidentDetailModal({
                             )}
                           </div>
                           <p className="text-xs text-muted-foreground leading-relaxed">
-                            {st.description}
+                            <FormattedInline text={st.description} />
                           </p>
                           {st.callout}
                         </div>
@@ -634,27 +664,17 @@ export function IncidentDetailModal({
                   {data.auditTrail.length === 0 ? (
                     <p className="text-xs text-muted-foreground">No audit entries recorded for this incident.</p>
                   ) : (
-                    <div className="space-y-2">
+                    <div className="space-y-2.5">
                       {data.auditTrail.map((ev) => (
-                        <div
+                        <AuditLogEntryCard
                           key={ev.id}
-                          className="p-3 rounded-lg bg-muted/40 border border-border flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
-                        >
-                          <div className="flex items-center gap-2 min-w-0">
-                            <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded bg-muted text-foreground border border-border shrink-0">
-                              {ev.action}
-                            </span>
-                            <span className="text-muted-foreground truncate max-w-md font-sans">
-                              {ev.details || 'No details recorded'}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-3 text-[11px] text-muted-foreground font-mono shrink-0">
-                            <span>{ev.actor}</span>
-                            <span className="tabular-nums">
-                              {new Date(ev.createdAt).toLocaleTimeString()}
-                            </span>
-                          </div>
-                        </div>
+                          log={{
+                            ...ev,
+                            incidentId: data.incident.id,
+                            orderId: data.order.id,
+                          }}
+                          compact
+                        />
                       ))}
                     </div>
                   )}

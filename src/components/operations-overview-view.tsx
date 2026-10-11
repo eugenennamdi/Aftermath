@@ -1,17 +1,24 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import { type OperationsOverview } from '@/services/query';
 import { MetricCard, Card, CardHeader, CardTitle, CardContent } from './ui/card';
 import { StatusBadge } from './ui/badge';
 import {
-  ShieldCheckIcon,
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogClose,
+} from './ui/dialog';
+import {
   ActivityIcon,
-  AlertTriangleIcon,
   DatabaseIcon,
   ServerIcon,
-  ClockIcon,
   ArrowRightIcon,
+  SearchIcon,
+  XIcon,
 } from './ui/icons';
 
 interface OperationsOverviewViewProps {
@@ -21,12 +28,17 @@ interface OperationsOverviewViewProps {
   onNavigateToScenarios: () => void;
 }
 
+import { AuditLogEntryCard } from './ui/audit-formatters';
+
+
 export function OperationsOverviewView({
   overview,
   isLoading,
   onNavigateToIncidents,
   onNavigateToScenarios,
 }: OperationsOverviewViewProps) {
+  const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   if (isLoading && !overview) {
     return (
       <div className="py-8 space-y-6 animate-pulse">
@@ -58,6 +70,18 @@ export function OperationsOverviewView({
   };
 
   const recentActivity = overview?.recentActivity ?? [];
+
+  const query = searchQuery.trim().toLowerCase();
+  const filteredActivity = query
+    ? recentActivity.filter((log) => {
+        const matchAction = log.action.toLowerCase().includes(query);
+        const matchActor = log.actor.toLowerCase().includes(query);
+        const matchDetails = (log.details || '').toLowerCase().includes(query);
+        const matchOrder = (log.orderId || '').toLowerCase().includes(query);
+        const matchIncident = (log.incidentId || '').toLowerCase().includes(query);
+        return matchAction || matchActor || matchDetails || matchOrder || matchIncident;
+      })
+    : recentActivity;
 
   return (
     <div className="space-y-6 py-6">
@@ -110,40 +134,21 @@ export function OperationsOverviewView({
         <MetricCard
           label="Total Incidents"
           value={metrics.totalIncidents}
-          subvalue={`${metrics.openIncidents} open awaiting action`}
-          icon={<AlertTriangleIcon size={16} />}
         />
 
         <MetricCard
           label="Resolved Recoveries"
           value={metrics.resolvedIncidents}
-          subvalue={
-            metrics.resolutionRate !== null
-              ? `${metrics.resolutionRate}% resolution efficiency`
-              : 'No incidents recorded'
-          }
-          icon={<ShieldCheckIcon size={16} />}
-          badge={<StatusBadge status="RESOLVED" />}
         />
 
         <MetricCard
           label="Active Investigations"
           value={metrics.activeInvestigations}
-          subvalue={
-            metrics.activeInvestigations > 0
-              ? 'Held by active worker leases'
-              : 'No active investigations'
-          }
-          icon={<ActivityIcon size={16} />}
-          badge={metrics.activeInvestigations > 0 ? <StatusBadge status="INVESTIGATING" pulse /> : undefined}
         />
 
         <MetricCard
           label="Security Escalations"
           value={metrics.escalatedIncidents}
-          subvalue="Underpaid or identity mismatches"
-          icon={<AlertTriangleIcon size={16} className={metrics.escalatedIncidents > 0 ? 'text-rose-500' : ''} />}
-          badge={metrics.escalatedIncidents > 0 ? <StatusBadge status="ESCALATED" /> : undefined}
         />
       </div>
 
@@ -275,49 +280,116 @@ export function OperationsOverviewView({
         </Card>
       </div>
 
-      {/* Recent Recovery Activity Stream */}
+      {/* Live Audit Log Section */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <ClockIcon size={15} className="text-muted-foreground" />
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-foreground">
-              Live Audit Log Trail
-            </h3>
-          </div>
-          <span className="text-xs text-muted-foreground font-mono">Latest 10 transitions</span>
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-foreground">
+            Live Audit Log Trail
+          </h3>
+          <span className="text-xs text-muted-foreground font-mono">
+            {recentActivity.length} recent transitions
+          </span>
         </div>
 
-        <Card className="overflow-hidden p-0">
-          {recentActivity.length === 0 ? (
-            <div className="p-8 text-center text-muted-foreground text-xs">
-              No audit log entries recorded yet.
-            </div>
-          ) : (
-            <div className="divide-y divide-border">
-              {recentActivity.map((log) => (
-                <div
-                  key={log.id}
-                  className="p-3 px-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2 hover:bg-muted/40 transition-colors"
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded bg-muted text-foreground border border-border shrink-0">
-                      {log.action}
-                    </span>
-                    <span className="text-xs text-foreground/80 truncate max-w-md">
-                      {log.details || 'No details recorded'}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-4 text-[11px] text-muted-foreground font-mono shrink-0">
-                    <span>{log.actor}</span>
-                    <span className="tabular-nums">{new Date(log.createdAt).toLocaleTimeString()}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+        <Card className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-card border-border shadow-xs hover:border-border/80 transition-colors">
+          <div className="space-y-1">
+            <h4 className="text-sm font-semibold text-foreground">
+              Autonomous Recovery Audit Trail
+            </h4>
+            <p className="text-xs text-muted-foreground leading-relaxed max-w-xl">
+              Immutable database ledger tracking worker claims, gate evaluations, Paystack payment verifications, and resolution events.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsAuditModalOpen(true)}
+            className="px-4 py-2 rounded-lg text-xs font-semibold bg-background hover:bg-muted text-foreground border border-border shadow-xs transition-colors flex items-center gap-2 cursor-pointer shrink-0"
+          >
+            <span>View Live Audit Log</span>
+            <ArrowRightIcon size={13} />
+          </button>
         </Card>
       </div>
+
+      {/* Live Audit Log Modal */}
+      <Dialog open={isAuditModalOpen} onOpenChange={setIsAuditModalOpen}>
+        <DialogContent className="sm:max-w-3xl max-h-[85vh] p-0 overflow-hidden flex flex-col" showCloseButton={false}>
+          <DialogHeader className="p-5 border-b border-border bg-card shrink-0">
+            <div className="flex items-start justify-between gap-3">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <DialogTitle className="text-base font-bold tracking-tight text-foreground">
+                    Live Audit Log Trail
+                  </DialogTitle>
+                  <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-muted text-foreground border border-border">
+                    {recentActivity.length} Events
+                  </span>
+                </div>
+                <DialogDescription className="text-xs text-muted-foreground">
+                  Immutable chronological ledger of worker leases, deterministic authorization gate decisions, and recovery events.
+                </DialogDescription>
+              </div>
+              <DialogClose asChild>
+                <button
+                  type="button"
+                  className="rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer shrink-0"
+                  aria-label="Close dialog"
+                >
+                  <XIcon size={16} />
+                </button>
+              </DialogClose>
+            </div>
+
+            {recentActivity.length > 0 && (
+              <div className="pt-3">
+                <div className="relative">
+                  <SearchIcon size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    type="text"
+                    placeholder="Filter by action, actor, order ID, incident ID, or details..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full pl-9 pr-3 py-1.5 text-xs bg-muted/50 border border-border rounded-lg text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                  />
+                </div>
+              </div>
+            )}
+          </DialogHeader>
+
+          <div className="p-5 overflow-y-auto space-y-3 flex-1">
+            {filteredActivity.length === 0 ? (
+              <div className="py-12 text-center space-y-1">
+                <p className="text-xs font-medium text-foreground">
+                  {recentActivity.length === 0 ? 'No audit entries recorded yet.' : 'No audit entries match your search.'}
+                </p>
+                <p className="text-[11px] text-muted-foreground">
+                  {recentActivity.length === 0
+                    ? 'Audit records are created automatically during worker reconciliation and payment recovery.'
+                    : 'Try adjusting your search query.'}
+                </p>
+              </div>
+            ) : (
+              filteredActivity.map((log) => (
+                <AuditLogEntryCard key={log.id} log={log} />
+              ))
+            )}
+          </div>
+
+          <div className="p-4 border-t border-border bg-card/60 flex items-center justify-between text-xs text-muted-foreground shrink-0">
+            <span className="font-mono text-[11px]">
+              Showing {filteredActivity.length} of {recentActivity.length} transitions
+            </span>
+            <DialogClose asChild>
+              <button
+                type="button"
+                className="px-3 py-1.5 rounded-lg text-xs font-medium bg-muted hover:bg-muted/80 text-foreground border border-border transition-colors cursor-pointer"
+              >
+                Close
+              </button>
+            </DialogClose>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

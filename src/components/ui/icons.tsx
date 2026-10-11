@@ -4,6 +4,38 @@ export interface IconProps extends React.SVGProps<SVGSVGElement> {
   size?: number;
 }
 
+export function AftermathLogo({ size = 18, className, ...props }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      {...props}
+    >
+      {/* Precision recovery chevron/apex */}
+      <path
+        d="M4 19.5L11.18 4.14C11.53 3.39 12.47 3.39 12.82 4.14L20 19.5"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      {/* Reconciliation loop bridging payment to entitlement */}
+      <path
+        d="M6.8 13.8C9.2 11.2 14.8 11.2 17.2 13.8"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      {/* Central deterministic authorization node */}
+      <circle cx="12" cy="12.6" r="1.6" fill="currentColor" />
+    </svg>
+  );
+}
+
 export function ShieldIcon({ size = 16, className, ...props }: IconProps) {
   return (
     <svg
