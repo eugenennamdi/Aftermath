@@ -72,6 +72,7 @@ async function run() {
       outputPath,
       tabToClick,
       statusFilter,
+      incidentIdToClick,
       openModalMode,
       setAuthCookie,
     }) {
@@ -165,8 +166,12 @@ async function run() {
           expression: `
             (() => {
               const rows = Array.from(document.querySelectorAll('tbody tr'));
-              if (rows.length > 0) {
-                rows[0].click();
+              ${
+                incidentIdToClick
+                  ? `const target = rows.find(r => r.textContent && r.textContent.includes('${incidentIdToClick}'));
+                     if (target) target.click();
+                     else if (rows.length > 0) rows[0].click();`
+                  : `if (rows.length > 0) rows[0].click();`
               }
             })()
           `,
@@ -177,13 +182,18 @@ async function run() {
           await send('Runtime.evaluate', {
             expression: `
               (() => {
-                const buttons = Array.from(document.querySelectorAll('button'));
+                const buttons = Array.from(document.querySelectorAll('button, [role="tab"]'));
                 const target = buttons.find(b => b.textContent && b.textContent.includes('Evidence'));
-                if (target) target.click();
+                if (target) {
+                  target.focus();
+                  target.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 }));
+                  target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 }));
+                  target.click();
+                }
               })()
             `,
           });
-          await sleep(1000);
+          await sleep(1500);
         }
       }
 
@@ -267,7 +277,7 @@ async function run() {
       outputPath: path.resolve('docs/screenshots/desktop_modal_escalated.png'),
     });
 
-    // 7. Authenticated Desktop - Evidence dossier tab
+    // 7. Authenticated Desktop - Evidence dossier tab (Fixture / Redacted mismatch)
     await capturePage({
       width: 1440,
       height: 900,
@@ -277,6 +287,19 @@ async function run() {
       statusFilter: 'RESOLVED',
       openModalMode: 'evidence',
       outputPath: path.resolve('docs/screenshots/desktop_incident_detail_evidence.png'),
+    });
+
+    // 7B. Authenticated Desktop - Evidence dossier tab (Genuine recovered incident)
+    await capturePage({
+      width: 1440,
+      height: 900,
+      mobile: false,
+      setAuthCookie: true,
+      tabToClick: 'Incidents',
+      statusFilter: 'RESOLVED',
+      incidentIdToClick: 'inc_1d4fc28b0ba24031',
+      openModalMode: 'evidence',
+      outputPath: path.resolve('docs/screenshots/desktop_incident_detail_evidence_genuine.png'),
     });
 
     // Backward-compatible copy for desktop_incident_detail_timeline.png

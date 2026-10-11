@@ -10,7 +10,7 @@ import {
   DialogClose,
 } from './ui/dialog';
 import { Button } from './ui/button';
-import { LockIcon, UnlockIcon } from './ui/icons';
+import { LockIcon, UnlockIcon, XIcon } from './ui/icons';
 
 interface OperatorLoginModalProps {
   isOpen: boolean;
@@ -58,7 +58,7 @@ export function OperatorLoginModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="max-w-md p-6" onClose={onClose}>
+      <DialogContent className="max-w-md p-6" showCloseButton={false}>
         <DialogHeader className="pb-4 border-b border-border">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5">
@@ -74,7 +74,15 @@ export function OperatorLoginModal({
                 </DialogDescription>
               </div>
             </div>
-            <DialogClose />
+            <DialogClose asChild>
+              <button
+                type="button"
+                className="rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
+                aria-label="Close"
+              >
+                <XIcon size={16} />
+              </button>
+            </DialogClose>
           </div>
         </DialogHeader>
 

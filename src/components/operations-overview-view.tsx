@@ -76,9 +76,6 @@ export function OperationsOverviewView({
                 Worker Standby
               </span>
             )}
-            <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 font-semibold tracking-wide">
-              LOCAL TEST DATA / FIXTURES
-            </span>
           </div>
 
           <h2 className="text-lg sm:text-xl font-bold tracking-tight text-foreground">
