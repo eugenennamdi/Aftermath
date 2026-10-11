@@ -315,7 +315,7 @@ export function buildTruthfulTimeline(view: IncidentDetailView): TimelineStage[]
       stages.push({
         stepNumber: 5,
         title: 'No Entitlement in Dossier',
-        badgeLabel: 'NOT CREATED',
+        badgeLabel: 'NOT RETURNED',
         status: 'BLOCKED',
         description: 'No entitlement returned in incident dossier.',
       });

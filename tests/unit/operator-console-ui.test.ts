@@ -258,7 +258,7 @@ describe('Operator Console UI — Truthful Incident Timeline & Evidence', () => 
 
     const step5B = retryTimeline.find((s: TimelineStage) => s.stepNumber === 5);
     expect(step5B?.title).toBe('No Entitlement in Dossier');
-    expect(step5B?.badgeLabel).toBe('NOT CREATED');
+    expect(step5B?.badgeLabel).toBe('NOT RETURNED');
     expect(step5B?.description).toBe('No entitlement returned in incident dossier.');
     expect(step5B?.description).not.toContain('Zero entitlement');
     expect(step5B?.description).not.toContain('zero');
