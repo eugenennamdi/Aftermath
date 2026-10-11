@@ -149,7 +149,7 @@ export default function OperatorConsolePage() {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-50 flex flex-col font-sans selection:bg-zinc-800 selection:text-zinc-100">
+    <div className="min-h-screen bg-[#FAFAF9] text-[#171B23] flex flex-col font-sans selection:bg-[#44647B]/15 selection:text-[#171B23]">
       {/* Top Application Bar */}
       <OperatorHeader
         activeTab={activeTab}
@@ -229,14 +229,16 @@ export default function OperatorConsolePage() {
       />
 
       {/* Footer */}
-      <footer className="border-t border-zinc-900 bg-zinc-950 py-6 text-xs text-zinc-500 font-mono">
+      <footer className="border-t border-[#E5E7EB] bg-white py-6 text-xs text-[#69717C] font-mono">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <span>Aftermath • neatHack 2026</span>
+            <span className="font-medium text-[#171B23]">Aftermath</span>
+            <span>•</span>
+            <span>neatHack 2026</span>
             <span>•</span>
             <span>Autonomous Recovery Engine</span>
           </div>
-          <div className="flex items-center gap-4 text-zinc-600">
+          <div className="flex items-center gap-4 text-[#9CA3AF]">
             <span>Claude Sonnet 4.6 (LiteLLM)</span>
             <span>neatlogs SDK</span>
             <span>PostgreSQL 17</span>

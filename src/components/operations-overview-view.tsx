@@ -8,11 +8,9 @@ import {
   ShieldCheckIcon,
   ActivityIcon,
   AlertTriangleIcon,
-  CheckCircleIcon,
   DatabaseIcon,
   ServerIcon,
   ClockIcon,
-  LayersIcon,
   ArrowRightIcon,
 } from './ui/icons';
 
@@ -34,10 +32,10 @@ export function OperationsOverviewView({
       <div className="py-12 space-y-6 animate-pulse">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="h-28 rounded-2xl bg-zinc-900/60 border border-zinc-800" />
+            <div key={i} className="h-28 rounded-xl bg-zinc-200/60 border border-[#E5E7EB]" />
           ))}
         </div>
-        <div className="h-64 rounded-2xl bg-zinc-900/60 border border-zinc-800" />
+        <div className="h-64 rounded-xl bg-zinc-200/60 border border-[#E5E7EB]" />
       </div>
     );
   }
@@ -64,18 +62,18 @@ export function OperationsOverviewView({
   return (
     <div className="space-y-8 py-6">
       {/* Hero Operational Banner */}
-      <div className="rounded-2xl p-6 bg-gradient-to-r from-zinc-900/80 via-zinc-900/50 to-zinc-950 border border-zinc-800/80 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+      <div className="rounded-2xl p-6 bg-gradient-to-r from-white via-[#FAFBFD] to-[#F3F6F9] border border-[#E5E7EB] shadow-[0_1px_3px_0_rgba(0,0,0,0.03)] flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div className="space-y-1.5">
           <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="text-[11px] font-mono uppercase tracking-wider text-emerald-400 font-medium">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="text-[11px] font-mono uppercase tracking-wider text-emerald-700 font-semibold">
               Autonomous Recovery Operational
             </span>
           </div>
-          <h2 className="text-xl font-bold tracking-tight text-zinc-100">
+          <h2 className="text-xl font-bold tracking-tight text-[#171B23]">
             Operations & Entitlement Health
           </h2>
-          <p className="text-xs text-zinc-400 max-w-2xl leading-relaxed">
+          <p className="text-xs text-[#69717C] max-w-2xl leading-relaxed">
             Continuous reconciliation across Paystack checkouts, local order bindings, and SaaS entitlements.
             Model-driven investigations gated by deterministic mathematical equality.
           </p>
@@ -84,14 +82,14 @@ export function OperationsOverviewView({
         <div className="flex items-center gap-3">
           <button
             onClick={onNavigateToIncidents}
-            className="px-3.5 py-2 rounded-xl text-xs font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/80 transition-colors flex items-center gap-2"
+            className="px-3.5 py-2 rounded-xl text-xs font-medium bg-white hover:bg-[#F9FAFB] text-[#171B23] border border-[#E5E7EB] shadow-xs transition-colors flex items-center gap-2 cursor-pointer"
           >
             <span>View Stream</span>
             <ArrowRightIcon size={13} />
           </button>
           <button
             onClick={onNavigateToScenarios}
-            className="px-3.5 py-2 rounded-xl text-xs font-medium bg-zinc-100 hover:bg-white text-zinc-950 font-semibold shadow-sm transition-colors flex items-center gap-2"
+            className="px-3.5 py-2 rounded-xl text-xs font-medium bg-[#171B23] hover:bg-[#282F3D] text-white font-semibold shadow-xs transition-colors flex items-center gap-2 cursor-pointer"
           >
             <span>Scenario Lab</span>
             <ArrowRightIcon size={13} />
@@ -132,7 +130,7 @@ export function OperationsOverviewView({
           label="Security Escalations"
           value={metrics.escalatedIncidents}
           subvalue="Underpaid or identity mismatches"
-          icon={<AlertTriangleIcon size={16} className="text-rose-400" />}
+          icon={<AlertTriangleIcon size={16} className="text-rose-500" />}
           badge={metrics.escalatedIncidents > 0 ? <StatusBadge status="ESCALATED" /> : undefined}
         />
       </div>
@@ -142,36 +140,36 @@ export function OperationsOverviewView({
         {/* Entitlement & Catalog State */}
         <DoubleBezelCard className="lg:col-span-1">
           <div className="space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-zinc-800/80">
+            <div className="flex items-center justify-between pb-3 border-b border-[#E5E7EB]">
               <div className="flex items-center gap-2">
-                <DatabaseIcon size={15} className="text-zinc-400" />
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300 font-mono">
+                <DatabaseIcon size={15} className="text-[#69717C]" />
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-[#171B23] font-mono">
                   Relational State
                 </h3>
               </div>
-              <span className="text-[10px] font-mono text-zinc-500">PostgreSQL</span>
+              <span className="text-[10px] font-mono text-[#69717C]">PostgreSQL</span>
             </div>
 
             <div className="space-y-3">
               <div className="flex items-center justify-between text-xs">
-                <span className="text-zinc-400">Active SaaS Entitlements</span>
-                <span className="font-mono font-semibold text-zinc-200">
+                <span className="text-[#69717C]">Active SaaS Entitlements</span>
+                <span className="font-mono font-semibold text-[#171B23] tabular-nums">
                   {metrics.activeEntitlements}
                 </span>
               </div>
               <div className="flex items-center justify-between text-xs">
-                <span className="text-zinc-400">Authoritative Orders</span>
-                <span className="font-mono font-semibold text-zinc-200">
+                <span className="text-[#69717C]">Authoritative Orders</span>
+                <span className="font-mono font-semibold text-[#171B23] tabular-nums">
                   {metrics.totalOrders}
                 </span>
               </div>
               <div className="flex items-center justify-between text-xs">
-                <span className="text-zinc-400">Idempotency Guarantee</span>
-                <span className="font-mono text-emerald-400 text-[11px]">DB-Enforced Unique</span>
+                <span className="text-[#69717C]">Idempotency Guarantee</span>
+                <span className="font-mono text-emerald-700 font-medium text-[11px]">DB-Enforced Unique</span>
               </div>
             </div>
 
-            <div className="pt-2 text-[11px] text-zinc-500 border-t border-zinc-800/60 leading-relaxed">
+            <div className="pt-2 text-[11px] text-[#69717C] border-t border-[#E5E7EB] leading-relaxed">
               Every provisioned entitlement maps to an immutable local order and Paystack transaction reference.
             </div>
           </div>
@@ -180,44 +178,44 @@ export function OperationsOverviewView({
         {/* Worker Fleet & Fencing Status */}
         <DoubleBezelCard className="lg:col-span-1">
           <div className="space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-zinc-800/80">
+            <div className="flex items-center justify-between pb-3 border-b border-[#E5E7EB]">
               <div className="flex items-center gap-2">
-                <ServerIcon size={15} className="text-zinc-400" />
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300 font-mono">
+                <ServerIcon size={15} className="text-[#69717C]" />
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-[#171B23] font-mono">
                   Worker Fleet
                 </h3>
               </div>
               <StatusBadge
                 status={fleet.hasActiveWorker ? 'ACTIVE' : 'STANDBY'}
-                variant={fleet.hasActiveWorker ? 'RESOLVED' : 'NEUTRAL'}
+                variant={fleet.hasActiveWorker ? 'ACTIVE' : 'STANDBY'}
                 pulse={fleet.hasActiveWorker}
               />
             </div>
 
             <div className="space-y-3">
               <div className="flex items-center justify-between text-xs">
-                <span className="text-zinc-400">Active Lease Owners</span>
-                <span className="font-mono font-semibold text-zinc-200">
+                <span className="text-[#69717C]">Active Lease Owners</span>
+                <span className="font-mono font-semibold text-[#171B23] tabular-nums">
                   {fleet.activeWorkersCount}
                 </span>
               </div>
               <div className="flex items-center justify-between text-xs">
-                <span className="text-zinc-400">Lease Heartbeat Window</span>
-                <span className="font-mono text-zinc-300">30s (10s pulse)</span>
+                <span className="text-[#69717C]">Lease Heartbeat Window</span>
+                <span className="font-mono text-[#171B23]">30s (10s pulse)</span>
               </div>
               <div className="flex items-center justify-between text-xs">
-                <span className="text-zinc-400">Fencing Monotonicity</span>
-                <span className="font-mono text-emerald-400 text-[11px]">Enforced</span>
+                <span className="text-[#69717C]">Fencing Monotonicity</span>
+                <span className="font-mono text-emerald-700 font-medium text-[11px]">Enforced</span>
               </div>
             </div>
 
-            <div className="pt-2 text-[11px] text-zinc-500 border-t border-zinc-800/60">
+            <div className="pt-2 text-[11px] text-[#69717C] border-t border-[#E5E7EB]">
               {fleet.activeWorkerIds.length > 0 ? (
                 <div className="space-y-1">
-                  <span className="text-[10px] text-zinc-400 font-mono">Current lease owners:</span>
+                  <span className="text-[10px] text-[#69717C] font-mono">Current lease owners:</span>
                   <div className="flex flex-wrap gap-1">
                     {fleet.activeWorkerIds.map((id) => (
-                      <span key={id} className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-zinc-900 text-zinc-300 border border-zinc-800">
+                      <span key={id} className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#F4F4F5] text-[#171B23] border border-[#E5E7EB]">
                         {id}
                       </span>
                     ))}
@@ -233,32 +231,32 @@ export function OperationsOverviewView({
         {/* Observability & Model Integration */}
         <DoubleBezelCard className="lg:col-span-1">
           <div className="space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-zinc-800/80">
+            <div className="flex items-center justify-between pb-3 border-b border-[#E5E7EB]">
               <div className="flex items-center gap-2">
-                <ActivityIcon size={15} className="text-zinc-400" />
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300 font-mono">
+                <ActivityIcon size={15} className="text-[#69717C]" />
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-[#171B23] font-mono">
                   Observability & AI
                 </h3>
               </div>
-              <span className="text-[10px] font-mono text-zinc-500">Live Traces</span>
+              <span className="text-[10px] font-mono text-[#69717C]">Live Traces</span>
             </div>
 
             <div className="space-y-3">
               <div className="flex items-center justify-between text-xs">
-                <span className="text-zinc-400">Investigator Model</span>
-                <span className="font-mono font-medium text-zinc-200">Claude Sonnet 4.6 (LiteLLM)</span>
+                <span className="text-[#69717C]">Investigator Model</span>
+                <span className="font-mono font-medium text-[#171B23]">Claude Sonnet 4.6 (LiteLLM)</span>
               </div>
               <div className="flex items-center justify-between text-xs">
-                <span className="text-zinc-400">Telemetry Ingestion</span>
-                <span className="font-mono text-emerald-400 text-[11px]">neatlogs TS SDK</span>
+                <span className="text-[#69717C]">Telemetry Ingestion</span>
+                <span className="font-mono text-emerald-700 font-medium text-[11px]">neatlogs TS SDK</span>
               </div>
               <div className="flex items-center justify-between text-xs">
-                <span className="text-zinc-400">Provenance Tracking</span>
-                <span className="font-mono text-zinc-300 text-[11px]">Entire Checkpoints</span>
+                <span className="text-[#69717C]">Provenance Tracking</span>
+                <span className="font-mono text-[#171B23] text-[11px]">Entire Checkpoints</span>
               </div>
             </div>
 
-            <div className="pt-2 text-[11px] text-zinc-500 border-t border-zinc-800/60 leading-relaxed">
+            <div className="pt-2 text-[11px] text-[#69717C] border-t border-[#E5E7EB] leading-relaxed">
               Model operates strictly as an investigative tool caller. All state mutations remain blocked by the Deterministic Authorization Gate.
             </div>
           </div>
@@ -269,38 +267,38 @@ export function OperationsOverviewView({
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <ClockIcon size={15} className="text-zinc-400" />
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300 font-mono">
+            <ClockIcon size={15} className="text-[#69717C]" />
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-[#171B23] font-mono">
               Live Audit Log Trail
             </h3>
           </div>
-          <span className="text-xs text-zinc-500 font-mono">Latest 10 transitions</span>
+          <span className="text-xs text-[#69717C] font-mono">Latest 10 transitions</span>
         </div>
 
         <DoubleBezelCard innerClassName="p-0 overflow-hidden">
           {recentActivity.length === 0 ? (
-            <div className="p-8 text-center text-zinc-500 text-xs">
+            <div className="p-8 text-center text-[#69717C] text-xs">
               No audit log entries recorded yet.
             </div>
           ) : (
-            <div className="divide-y divide-zinc-800/60">
+            <div className="divide-y divide-[#F3F4F6]">
               {recentActivity.map((log) => (
                 <div
                   key={log.id}
-                  className="p-3.5 px-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2 hover:bg-zinc-900/40 transition-colors"
+                  className="p-3.5 px-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2 hover:bg-[#F9FAFB] transition-colors"
                 >
-                  <div className="flex items-center gap-3">
-                    <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded bg-zinc-900 text-zinc-300 border border-zinc-800">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded bg-[#F4F4F5] text-[#171B23] border border-[#E5E7EB] shrink-0">
                       {log.action}
                     </span>
-                    <span className="text-xs text-zinc-300 truncate max-w-md">
+                    <span className="text-xs text-[#374151] truncate max-w-md">
                       {log.details || 'No details recorded'}
                     </span>
                   </div>
 
-                  <div className="flex items-center gap-4 text-[11px] text-zinc-500 font-mono">
+                  <div className="flex items-center gap-4 text-[11px] text-[#69717C] font-mono shrink-0">
                     <span>{log.actor}</span>
-                    <span>{new Date(log.createdAt).toLocaleTimeString()}</span>
+                    <span className="tabular-nums">{new Date(log.createdAt).toLocaleTimeString()}</span>
                   </div>
                 </div>
               ))}

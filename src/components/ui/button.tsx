@@ -17,8 +17,8 @@ export function Button({
   disabled,
   ...props
 }: ButtonProps) {
-  let baseClasses =
-    'group inline-flex items-center justify-center font-medium transition-all duration-200 active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none select-none';
+  const baseClasses =
+    'group inline-flex items-center justify-center font-medium transition-all duration-150 active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none select-none cursor-pointer';
 
   let sizeClasses = 'text-xs px-3.5 py-1.5 rounded-lg gap-2';
   if (size === 'sm') sizeClasses = 'text-[11px] px-2.5 py-1 rounded-md gap-1.5';
@@ -28,22 +28,23 @@ export function Button({
   switch (variant) {
     case 'primary':
       variantClasses =
-        'bg-zinc-100 text-zinc-950 hover:bg-white border border-transparent shadow-[0_1px_2px_rgba(0,0,0,0.1)]';
+        'bg-[#171B23] text-white hover:bg-[#282F3D] border border-[#171B23] shadow-xs';
       break;
     case 'secondary':
       variantClasses =
-        'bg-zinc-900 text-zinc-200 hover:bg-zinc-800/90 border border-zinc-800 hover:border-zinc-700/80';
+        'bg-white text-[#171B23] hover:bg-[#F9FAFB] border border-[#E5E7EB] shadow-xs hover:border-[#D1D5DB]';
       break;
     case 'outline':
       variantClasses =
-        'bg-transparent text-zinc-300 hover:bg-zinc-900/60 border border-zinc-800 hover:border-zinc-700';
+        'bg-transparent text-[#374151] hover:bg-[#F3F4F6] border border-[#E5E7EB] hover:border-[#D1D5DB]';
       break;
     case 'ghost':
-      variantClasses = 'bg-transparent text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/40';
+      variantClasses =
+        'bg-transparent text-[#4B5563] hover:text-[#111827] hover:bg-[#F3F4F6]';
       break;
     case 'danger':
       variantClasses =
-        'bg-rose-950/40 text-rose-300 hover:bg-rose-900/60 border border-rose-800/50 hover:border-rose-700';
+        'bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200';
       break;
   }
 
@@ -54,11 +55,11 @@ export function Button({
       {...props}
     >
       {isLoading ? (
-        <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+        <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin shrink-0" />
       ) : (
         icon && <span className="shrink-0">{icon}</span>
       )}
-      <span>{children}</span>
+      {children && <span>{children}</span>}
     </button>
   );
 }

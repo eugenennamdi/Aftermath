@@ -11,7 +11,6 @@ import {
   ChevronRightIcon,
   CopyIcon,
   ArrowRightIcon,
-  ClockIcon,
   LockIcon,
 } from './ui/icons';
 
@@ -74,8 +73,8 @@ export function IncidentStreamView({
       {/* Header & Controls Bar */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold tracking-tight text-zinc-100">Incident Stream</h2>
-          <p className="text-xs text-zinc-400 mt-0.5">
+          <h2 className="text-xl font-bold tracking-tight text-[#171B23]">Incident Stream</h2>
+          <p className="text-xs text-[#69717C] mt-0.5">
             Discrepancies identified across webhook ingestion and periodic reconciliation sweeps.
           </p>
         </div>
@@ -84,14 +83,14 @@ export function IncidentStreamView({
         <div className="relative w-full md:w-80">
           <SearchIcon
             size={14}
-            className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500"
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-[#9CA3AF]"
           />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
             placeholder="Search incident, order, or email..."
-            className="w-full pl-9 pr-3.5 py-2 text-xs font-mono bg-zinc-900/90 border border-zinc-800 rounded-xl text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-700 focus:ring-1 focus:ring-zinc-700 transition-colors"
+            className="w-full pl-9 pr-3.5 py-2 text-xs font-mono bg-white border border-[#E5E7EB] rounded-xl text-[#171B23] placeholder:text-[#9CA3AF] focus:outline-none focus:border-[#44647B] focus:ring-1 focus:ring-[#44647B] transition-colors shadow-xs"
           />
         </div>
       </div>
@@ -102,10 +101,10 @@ export function IncidentStreamView({
           <button
             key={s}
             onClick={() => onStatusChange(s)}
-            className={`px-3 py-1.5 rounded-lg font-mono font-medium transition-all ${
+            className={`px-3 py-1.5 rounded-lg font-mono font-medium transition-all cursor-pointer ${
               selectedStatus === s
-                ? 'bg-zinc-800 text-zinc-100 border border-zinc-700 shadow-sm'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900 border border-transparent'
+                ? 'bg-white text-[#171B23] border border-[#E5E7EB] shadow-xs'
+                : 'text-[#69717C] hover:text-[#171B23] hover:bg-white/60 border border-transparent'
             }`}
           >
             {s}
@@ -117,17 +116,17 @@ export function IncidentStreamView({
       <DoubleBezelCard innerClassName="p-0 overflow-hidden">
         {isLoading ? (
           <div className="p-12 text-center space-y-3">
-            <span className="w-5 h-5 border-2 border-zinc-500 border-t-zinc-200 rounded-full animate-spin inline-block" />
-            <p className="text-xs text-zinc-500 font-mono">Loading authoritative records...</p>
+            <span className="w-5 h-5 border-2 border-[#D1D5DB] border-t-[#44647B] rounded-full animate-spin inline-block" />
+            <p className="text-xs text-[#69717C] font-mono">Loading authoritative records...</p>
           </div>
         ) : error === 'AUTH_REQUIRED' || !isOperator ? (
           <div className="p-16 text-center space-y-4 max-w-md mx-auto">
-            <div className="w-10 h-10 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center mx-auto text-zinc-400">
+            <div className="w-10 h-10 rounded-full bg-[#F4F4F5] border border-[#E5E7EB] flex items-center justify-center mx-auto text-[#69717C]">
               <LockIcon size={18} />
             </div>
             <div className="space-y-1.5">
-              <p className="text-sm font-semibold text-zinc-200">Operator Authentication Required</p>
-              <p className="text-xs text-zinc-400 leading-relaxed">
+              <p className="text-sm font-semibold text-[#171B23]">Operator Authentication Required</p>
+              <p className="text-xs text-[#69717C] leading-relaxed">
                 Live incident streams expose tenant order bindings and Paystack transaction references. Authenticate with your operator passphrase to inspect and manage recovery incidents.
               </p>
             </div>
@@ -144,13 +143,13 @@ export function IncidentStreamView({
           </div>
         ) : error ? (
           <div className="p-12 text-center space-y-2">
-            <p className="text-xs text-rose-400 font-medium">Failed to load incident stream</p>
-            <p className="text-[11px] text-zinc-500">{error}</p>
+            <p className="text-xs text-rose-600 font-medium">Failed to load incident stream</p>
+            <p className="text-[11px] text-[#69717C]">{error}</p>
           </div>
         ) : incidents.length === 0 ? (
           <div className="p-16 text-center space-y-2">
-            <p className="text-sm font-medium text-zinc-300">No matching incidents found</p>
-            <p className="text-xs text-zinc-500 max-w-sm mx-auto">
+            <p className="text-sm font-medium text-[#171B23]">No matching incidents found</p>
+            <p className="text-xs text-[#69717C] max-w-sm mx-auto">
               No incidents match status &quot;{selectedStatus}&quot; or query &quot;{searchQuery}&quot;. Use the Scenario Lab to trigger a demonstration incident.
             </p>
           </div>
@@ -158,7 +157,7 @@ export function IncidentStreamView({
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs border-collapse">
               <thead>
-                <tr className="border-b border-zinc-800/80 bg-zinc-900/40 text-[11px] font-mono uppercase tracking-wider text-zinc-400">
+                <tr className="border-b border-[#E5E7EB] bg-[#F9FAFB] text-[11px] font-mono uppercase tracking-wider text-[#69717C]">
                   <th className="py-3 px-4 font-medium">Incident ID</th>
                   <th className="py-3 px-4 font-medium">Status</th>
                   <th className="py-3 px-4 font-medium">Failure Reason</th>
@@ -169,28 +168,28 @@ export function IncidentStreamView({
                   <th className="py-3 px-4 font-medium text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-800/60 font-sans">
+              <tbody className="divide-y divide-[#F3F4F6] font-sans">
                 {incidents.map((inc) => (
                   <tr
                     key={inc.id}
                     onClick={() => onSelectIncident(inc.id)}
-                    className="group hover:bg-zinc-900/60 cursor-pointer transition-colors"
+                    className="group hover:bg-[#F9FAFB] cursor-pointer transition-colors"
                   >
                     {/* Incident ID */}
-                    <td className="py-3.5 px-4 font-mono text-zinc-200">
+                    <td className="py-3.5 px-4 font-mono text-[#171B23]">
                       <div className="flex items-center gap-1.5">
-                        <span className="font-semibold text-zinc-100">
+                        <span className="font-semibold text-[#171B23]">
                           {inc.id.slice(0, 14)}...
                         </span>
                         <button
                           onClick={(e) => copyToClipboard(e, inc.id)}
-                          className="opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-zinc-300 p-0.5 rounded transition-opacity"
+                          className="opacity-0 group-hover:opacity-100 text-[#9CA3AF] hover:text-[#171B23] p-0.5 rounded transition-opacity cursor-pointer"
                           title="Copy Incident ID"
                         >
                           <CopyIcon size={12} />
                         </button>
                         {copiedId === inc.id && (
-                          <span className="text-[10px] text-emerald-400">Copied</span>
+                          <span className="text-[10px] text-emerald-600 font-medium">Copied</span>
                         )}
                       </div>
                     </td>
@@ -201,37 +200,37 @@ export function IncidentStreamView({
                     </td>
 
                     {/* Failure Category */}
-                    <td className="py-3.5 px-4 font-mono text-[11px] text-zinc-300">
+                    <td className="py-3.5 px-4 font-mono text-[11px] text-[#374151]">
                       {inc.reason}
                     </td>
 
                     {/* Order / Customer */}
                     <td className="py-3.5 px-4">
                       <div className="space-y-0.5">
-                        <div className="font-mono text-[11px] text-zinc-300">
+                        <div className="font-mono text-[11px] text-[#171B23]">
                           {inc.orderId.slice(0, 12)}...
                         </div>
-                        <div className="text-[11px] text-zinc-500 truncate max-w-[140px]">
+                        <div className="text-[11px] text-[#69717C] truncate max-w-[140px]">
                           {inc.customerEmailRedacted}
                         </div>
                       </div>
                     </td>
 
                     {/* Expected Amount */}
-                    <td className="py-3.5 px-4 font-mono text-zinc-200">
+                    <td className="py-3.5 px-4 font-mono text-[#171B23] tabular-nums font-medium">
                       {(inc.expectedAmount / 100).toLocaleString('en-US', {
                         minimumFractionDigits: 2,
                       })}{' '}
-                      <span className="text-zinc-500 text-[10px]">{inc.currency}</span>
+                      <span className="text-[#69717C] text-[10px] font-normal">{inc.currency}</span>
                     </td>
 
                     {/* Retry Budget */}
-                    <td className="py-3.5 px-4 font-mono text-[11px] text-zinc-400">
+                    <td className="py-3.5 px-4 font-mono text-[11px] text-[#69717C]">
                       {inc.retryCount}/5
                     </td>
 
                     {/* Detected At */}
-                    <td className="py-3.5 px-4 font-mono text-[11px] text-zinc-500">
+                    <td className="py-3.5 px-4 font-mono text-[11px] text-[#69717C] tabular-nums">
                       {new Date(inc.createdAt).toLocaleTimeString([], {
                         hour: '2-digit',
                         minute: '2-digit',
@@ -240,7 +239,7 @@ export function IncidentStreamView({
 
                     {/* Action Arrow */}
                     <td className="py-3.5 px-4 text-right">
-                      <span className="inline-flex items-center gap-1 text-[11px] font-medium text-zinc-400 group-hover:text-zinc-100 transition-colors">
+                      <span className="inline-flex items-center gap-1 text-[11px] font-medium text-[#44647B] group-hover:text-[#171B23] transition-colors">
                         <span>Inspect</span>
                         <ArrowRightIcon size={12} />
                       </span>
@@ -254,7 +253,7 @@ export function IncidentStreamView({
 
         {/* Pagination Footer */}
         {!isLoading && total > 0 && (
-          <div className="p-3.5 px-4 border-t border-zinc-800/80 bg-zinc-900/30 flex items-center justify-between text-xs text-zinc-400 font-mono">
+          <div className="p-3.5 px-4 border-t border-[#E5E7EB] bg-[#F9FAFB] flex items-center justify-between text-xs text-[#69717C] font-mono">
             <div>
               Showing {Math.min(offset + 1, total)} - {Math.min(offset + incidents.length, total)} of {total} incidents
             </div>

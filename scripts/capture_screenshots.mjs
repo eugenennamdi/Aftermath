@@ -133,16 +133,27 @@ async function run() {
         await send('Runtime.evaluate', {
           expression: `
             (() => {
-              const incidentRows = Array.from(document.querySelectorAll('div, tr, button')).find(el => el.textContent && el.textContent.includes('inc_'));
-              if (incidentRows) {
-                // Find clickable item inside or the item itself
-                const btn = incidentRows.closest('button') || incidentRows.querySelector('button') || incidentRows;
-                btn.click();
+              const rows = Array.from(document.querySelectorAll('tbody tr'));
+              if (rows.length > 0) {
+                rows[0].click();
               }
             })()
           `,
         });
-        await sleep(1500);
+        await sleep(2500);
+
+        if (tabToClick === 'evidence' || incidentToOpen === 'evidence') {
+          await send('Runtime.evaluate', {
+            expression: `
+              (() => {
+                const buttons = Array.from(document.querySelectorAll('button'));
+                const target = buttons.find(b => b.textContent && b.textContent.includes('Evidence'));
+                if (target) target.click();
+              })()
+            `,
+          });
+          await sleep(1000);
+        }
       }
 
       // Capture screenshot
@@ -197,7 +208,29 @@ async function run() {
       outputPath: path.resolve('docs/screenshots/desktop_incidents.png'),
     });
 
-    // 5. Authenticated Mobile (390x844) - Incidents stream
+    // 5. Authenticated Desktop - Incident Detail Timeline Modal
+    await capturePage({
+      width: 1440,
+      height: 900,
+      mobile: false,
+      setAuthCookie: true,
+      tabToClick: 'Incidents',
+      incidentToOpen: 'timeline',
+      outputPath: path.resolve('docs/screenshots/desktop_incident_detail_timeline.png'),
+    });
+
+    // 6. Authenticated Desktop - Incident Detail Evidence Modal
+    await capturePage({
+      width: 1440,
+      height: 900,
+      mobile: false,
+      setAuthCookie: true,
+      tabToClick: 'Incidents',
+      incidentToOpen: 'evidence',
+      outputPath: path.resolve('docs/screenshots/desktop_incident_detail_evidence.png'),
+    });
+
+    // 7. Authenticated Mobile (390x844) - Incidents stream
     await capturePage({
       width: 390,
       height: 844,

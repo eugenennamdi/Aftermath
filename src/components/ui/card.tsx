@@ -14,12 +14,10 @@ export function DoubleBezelCard({
 }: CardProps) {
   return (
     <div
-      className={`rounded-2xl p-1 bg-gradient-to-b from-zinc-800/60 to-zinc-900/40 border border-zinc-800/70 shadow-sm ${className}`}
+      className={`rounded-xl bg-white border border-[#E5E7EB] shadow-[0_1px_3px_0_rgba(0,0,0,0.03)] transition-all ${className}`}
       {...props}
     >
-      <div
-        className={`rounded-[calc(1rem-0.125rem)] bg-zinc-950/90 border border-white/[0.03] p-5 ${innerClassName}`}
-      >
+      <div className={`p-5 ${innerClassName}`}>
         {children}
       </div>
     </div>
@@ -44,20 +42,20 @@ export function MetricCard({
   return (
     <DoubleBezelCard>
       <div className="flex items-start justify-between">
-        <div className="space-y-1">
-          <span className="text-[11px] font-mono tracking-wider uppercase text-zinc-400 font-medium">
+        <div className="space-y-1 min-w-0">
+          <span className="text-[11px] font-mono tracking-wider uppercase text-[#69717C] font-medium block truncate">
             {label}
           </span>
-          <div className="text-2xl font-semibold tracking-tight text-zinc-100 font-mono">
+          <div className="text-2xl font-semibold tracking-tight text-[#171B23] font-mono tabular-nums">
             {value}
           </div>
           {subvalue && (
-            <p className="text-xs text-zinc-500 font-sans mt-0.5">{subvalue}</p>
+            <p className="text-xs text-[#69717C] font-sans mt-0.5 truncate">{subvalue}</p>
           )}
         </div>
-        <div className="flex flex-col items-end gap-1.5">
+        <div className="flex flex-col items-end gap-1.5 shrink-0 ml-3">
           {icon && (
-            <div className="w-8 h-8 rounded-lg bg-zinc-900/80 border border-zinc-800/80 flex items-center justify-center text-zinc-400">
+            <div className="w-8 h-8 rounded-lg bg-[#F4F4F5] border border-[#E5E7EB] flex items-center justify-center text-[#69717C]">
               {icon}
             </div>
           )}

@@ -8,7 +8,9 @@ export type StatusVariant =
   | 'ESCALATED'
   | 'DISMISSED'
   | 'NEUTRAL'
-  | 'FIXTURE';
+  | 'FIXTURE'
+  | 'ACTIVE'
+  | 'STANDBY';
 
 interface StatusBadgeProps {
   status: string;
@@ -27,36 +29,39 @@ export function StatusBadge({
 }: StatusBadgeProps) {
   const norm = (variant || status).toUpperCase() as StatusVariant;
 
-  let colorClasses = 'bg-zinc-800/80 text-zinc-300 border-zinc-700/60';
+  let colorClasses = 'bg-zinc-100 text-zinc-700 border-zinc-200';
   let dotColor = 'bg-zinc-400';
 
   switch (norm) {
     case 'RESOLVED':
-      colorClasses = 'bg-emerald-950/40 text-emerald-300 border-emerald-500/30';
-      dotColor = 'bg-emerald-400';
+    case 'ACTIVE':
+      colorClasses = 'bg-emerald-50 text-emerald-700 border-emerald-200/80';
+      dotColor = 'bg-emerald-500';
       break;
     case 'INVESTIGATING':
-      colorClasses = 'bg-amber-950/40 text-amber-300 border-amber-500/30';
-      dotColor = 'bg-amber-400';
+      colorClasses = 'bg-amber-50 text-amber-800 border-amber-200/80';
+      dotColor = 'bg-amber-500';
       break;
     case 'PROVISIONED':
-      colorClasses = 'bg-cyan-950/40 text-cyan-300 border-cyan-500/30';
-      dotColor = 'bg-cyan-400';
+      colorClasses = 'bg-sky-50 text-sky-800 border-sky-200/80';
+      dotColor = 'bg-sky-500';
       break;
     case 'OPEN':
-      colorClasses = 'bg-sky-950/40 text-sky-300 border-sky-500/30';
-      dotColor = 'bg-sky-400';
+      colorClasses = 'bg-blue-50 text-blue-800 border-blue-200/80';
+      dotColor = 'bg-blue-500';
       break;
     case 'ESCALATED':
-      colorClasses = 'bg-rose-950/40 text-rose-300 border-rose-500/30';
-      dotColor = 'bg-rose-400';
+      colorClasses = 'bg-rose-50 text-rose-700 border-rose-200/80';
+      dotColor = 'bg-rose-500';
       break;
     case 'FIXTURE':
-      colorClasses = 'bg-purple-950/40 text-purple-300 border-purple-500/30';
-      dotColor = 'bg-purple-400';
+      colorClasses = 'bg-purple-50 text-purple-800 border-purple-200/80';
+      dotColor = 'bg-purple-500';
       break;
+    case 'STANDBY':
+    case 'NEUTRAL':
     default:
-      colorClasses = 'bg-zinc-800/80 text-zinc-300 border-zinc-700/60';
+      colorClasses = 'bg-zinc-100 text-zinc-600 border-zinc-200';
       dotColor = 'bg-zinc-400';
   }
 
@@ -67,11 +72,11 @@ export function StatusBadge({
       className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-mono font-medium tracking-tight border ${colorClasses} ${className}`}
     >
       <span
-        className={`w-1.5 h-1.5 rounded-full ${dotColor} ${
+        className={`w-1.5 h-1.5 rounded-full shrink-0 ${dotColor} ${
           shouldPulse ? 'animate-pulse' : ''
         }`}
       />
-      {children || status}
+      <span>{children || status}</span>
     </span>
   );
 }
