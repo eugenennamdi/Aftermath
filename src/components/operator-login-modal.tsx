@@ -26,6 +26,14 @@ export function OperatorLoginModal({
   const [secret, setSecret] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isAutofilled, setIsAutofilled] = useState(false);
+
+  function handleAutofill() {
+    setSecret('de09a703ca5453db800f121ce0d5ae9432e842de9995d712');
+    setError(null);
+    setIsAutofilled(true);
+    setTimeout(() => setIsAutofilled(false), 2500);
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -88,9 +96,18 @@ export function OperatorLoginModal({
 
         <form onSubmit={handleSubmit} className="mt-5 space-y-4">
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-foreground">
-              Operator Security Key
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-medium text-foreground">
+                Operator Security Key
+              </label>
+              <button
+                type="button"
+                onClick={handleAutofill}
+                className="text-[11px] text-primary hover:text-primary/80 font-medium transition-colors cursor-pointer"
+              >
+                {isAutofilled ? '✓ Key filled' : 'Judging neatHack? Autofill key'}
+              </button>
+            </div>
             <input
               type="password"
               value={secret}
