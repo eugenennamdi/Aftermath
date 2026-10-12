@@ -721,7 +721,7 @@ export const queryService = new QueryService();
  */
 export function extractNeatlogsTraceInfo(
   logs: Array<{ details: string | null }>,
-  env?: { endpoint?: string; appUrl?: string }
+  env?: { endpoint?: string; appUrl?: string; orgId?: string; projectId?: string }
 ): { traceId: string | null; traceUrl: string | null } {
   let genuineTraceId: string | null = null;
   for (const log of logs) {
@@ -745,21 +745,22 @@ export function extractNeatlogsTraceInfo(
   let traceUrl: string | null = null;
   if (genuineTraceId && /^[0-9a-f]{32}$/i.test(genuineTraceId)) {
     try {
-      const rawAppUrl = env?.appUrl ?? process.env.NEATLOGS_APP_URL;
-      if (rawAppUrl) {
-        const parsed = new URL(rawAppUrl);
-        traceUrl = `${parsed.origin}/app/traces/${genuineTraceId}`;
-      } else {
-        const ep = env?.endpoint ?? process.env.NEATLOGS_ENDPOINT ?? 'https://neatlogs.com';
-        const parsedUrl = new URL(ep);
-        if (parsedUrl.hostname.includes('ingest.neatlogs.com')) {
-          traceUrl = `https://neatlogs.com/app/traces/${genuineTraceId}`;
-        } else if (parsedUrl.protocol === 'https:') {
-          traceUrl = `${parsedUrl.origin}/app/traces/${genuineTraceId}`;
-        }
-      }
+      const rawAppUrl = env?.appUrl ?? process.env.NEATLOGS_APP_URL ?? 'https://app.neatlogs.com';
+      const parsed = new URL(rawAppUrl);
+      const origin = parsed.origin;
+      const basePath = parsed.pathname.replace(/\/+$/, '');
+      const path = basePath ? `${basePath}/traces/${genuineTraceId}` : `/traces/${genuineTraceId}`;
+      const url = new URL(path, origin);
+
+      const orgId = env?.orgId ?? process.env.NEATLOGS_ORG_ID ?? '81f4cdbf-7267-4741-ad1c-6cc295d00541';
+      const projectId = env?.projectId ?? process.env.NEATLOGS_PROJECT_ID ?? '33ab07e8-5b29-4c39-8bfc-e47139203005';
+
+      if (orgId) url.searchParams.set('orgId', orgId);
+      if (projectId) url.searchParams.set('projectId', projectId);
+
+      traceUrl = url.toString();
     } catch {
-      traceUrl = `https://neatlogs.com/app/traces/${genuineTraceId}`;
+      traceUrl = `https://app.neatlogs.com/traces/${genuineTraceId}?orgId=81f4cdbf-7267-4741-ad1c-6cc295d00541&projectId=33ab07e8-5b29-4c39-8bfc-e47139203005`;
     }
   }
 

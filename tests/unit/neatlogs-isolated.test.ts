@@ -41,26 +41,30 @@ describe('neatlogs Integration & Privacy Sanitization', () => {
 
     const traceHex = '4bf92f3577b34da6a3ce929d0e0e4736';
 
-    // 1. JSON audit log
+    // 1. JSON audit log (defaults to app.neatlogs.com with default org and project)
     const jsonLogs = [
       { details: JSON.stringify({ message: 'Started', traceId: traceHex }) },
     ];
-    const res1 = extractNeatlogsTraceInfo(jsonLogs, { endpoint: 'https://eu.ingest.neatlogs.com' });
+    const res1 = extractNeatlogsTraceInfo(jsonLogs);
     expect(res1.traceId).toBe(traceHex);
-    expect(res1.traceUrl).toBe(`https://neatlogs.com/app/traces/${traceHex}`);
+    expect(res1.traceUrl).toBe(`https://app.neatlogs.com/traces/${traceHex}?orgId=81f4cdbf-7267-4741-ad1c-6cc295d00541&projectId=33ab07e8-5b29-4c39-8bfc-e47139203005`);
 
-    // 2. Custom app URL
-    const res2 = extractNeatlogsTraceInfo(jsonLogs, { appUrl: 'https://custom-dashboard.neatlogs.com' });
+    // 2. Custom app URL and scoped org/project
+    const res2 = extractNeatlogsTraceInfo(jsonLogs, {
+      appUrl: 'https://custom-dashboard.neatlogs.com',
+      orgId: 'org_test_1',
+      projectId: 'proj_test_1',
+    });
     expect(res2.traceId).toBe(traceHex);
-    expect(res2.traceUrl).toBe(`https://custom-dashboard.neatlogs.com/app/traces/${traceHex}`);
+    expect(res2.traceUrl).toBe(`https://custom-dashboard.neatlogs.com/traces/${traceHex}?orgId=org_test_1&projectId=proj_test_1`);
 
     // 3. Fallback regex string log
     const strLogs = [
       { details: `incident processed with traceId: "${traceHex}" and success` },
     ];
-    const res3 = extractNeatlogsTraceInfo(strLogs, { endpoint: 'https://neatlogs.com' });
+    const res3 = extractNeatlogsTraceInfo(strLogs);
     expect(res3.traceId).toBe(traceHex);
-    expect(res3.traceUrl).toBe(`https://neatlogs.com/app/traces/${traceHex}`);
+    expect(res3.traceUrl).toBe(`https://app.neatlogs.com/traces/${traceHex}?orgId=81f4cdbf-7267-4741-ad1c-6cc295d00541&projectId=33ab07e8-5b29-4c39-8bfc-e47139203005`);
 
     // 4. Missing / simulated trace
     const emptyLogs = [{ details: JSON.stringify({ message: 'No trace' }) }];
