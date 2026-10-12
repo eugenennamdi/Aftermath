@@ -265,6 +265,7 @@ export async function verifyPaystackTransaction(
         // Persist independent verification response in audit_logs with explicit order/incident association & provenance
         const auditAction = isLiveHttp ? 'PAYSTACK_VERIFIED' : 'PAYSTACK_FIXTURE_VERIFIED';
         const auditActor = isLiveHttp ? 'paystack_adapter' : 'paystack_fixture';
+        const toolTraceId = toolSpan?.spanContext()?.traceId;
         try {
           await db.insert(auditLogs).values({
             id: `aud_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`,
@@ -281,6 +282,7 @@ export async function verifyPaystackTransaction(
               customerEmail: redactEmail(outcome.customerEmail),
               gatewayResponse: outcome.gatewayResponse || 'Successful',
               verifiedAt: new Date().toISOString(),
+              traceId: toolTraceId,
             }),
           });
         } catch {
@@ -305,6 +307,7 @@ export async function verifyPaystackTransaction(
         if (outcome.outcome === 'FAILED') {
           const auditAction = isLiveHttp ? 'PAYSTACK_VERIFICATION_FAILED' : 'PAYSTACK_FIXTURE_FAILED';
           const auditActor = isLiveHttp ? 'paystack_adapter' : 'paystack_fixture';
+          const toolTraceId = toolSpan?.spanContext()?.traceId;
           try {
             await db.insert(auditLogs).values({
               id: `aud_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`,
@@ -318,6 +321,7 @@ export async function verifyPaystackTransaction(
                 outcome: outcome.outcome,
                 error: 'gatewayResponse' in outcome ? outcome.gatewayResponse : 'Transaction failed',
                 verifiedAt: new Date().toISOString(),
+                traceId: toolTraceId,
               }),
             });
           } catch {

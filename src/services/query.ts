@@ -624,39 +624,7 @@ export class QueryService {
         }
       }
 
-    // Extract genuine neatlogs trace if captured in audit logs
-    let genuineTraceId: string | null = null;
-    for (const log of logs) {
-      if (log.details) {
-        try {
-          const parsed = JSON.parse(log.details);
-          if (parsed.traceId && typeof parsed.traceId === 'string') {
-            genuineTraceId = parsed.traceId;
-            break;
-          }
-        } catch {
-          const match = /traceId['":\s]+([a-fA-F0-9]{32})/.exec(log.details);
-          if (match) {
-            genuineTraceId = match[1];
-            break;
-          }
-        }
-      }
-    }
-
-    // Format neatlogs URL strictly if genuine 32-character hex traceId and valid HTTPS endpoint
-    let traceUrl: string | null = null;
-    if (genuineTraceId && /^[0-9a-f]{32}$/i.test(genuineTraceId)) {
-      try {
-        const ep = process.env.NEATLOGS_ENDPOINT || 'https://neatlogs.com';
-        const parsedUrl = new URL(ep);
-        if (parsedUrl.protocol === 'https:') {
-          traceUrl = `${parsedUrl.origin}/app/traces/${genuineTraceId}`;
-        }
-      } catch {
-        traceUrl = null;
-      }
-    }
+    const { traceId: genuineTraceId, traceUrl } = extractNeatlogsTraceInfo(logs);
 
     return {
       incident: {
@@ -747,3 +715,53 @@ export class QueryService {
 }
 
 export const queryService = new QueryService();
+
+/**
+ * Extracts genuine 32-character hex traceId from audit logs and maps to canonical neatlogs dashboard URL.
+ */
+export function extractNeatlogsTraceInfo(
+  logs: Array<{ details: string | null }>,
+  env?: { endpoint?: string; appUrl?: string }
+): { traceId: string | null; traceUrl: string | null } {
+  let genuineTraceId: string | null = null;
+  for (const log of logs) {
+    if (log.details) {
+      try {
+        const parsed = JSON.parse(log.details);
+        if (parsed.traceId && typeof parsed.traceId === 'string') {
+          genuineTraceId = parsed.traceId;
+          break;
+        }
+      } catch {
+        const match = /traceId['":\s]+([a-fA-F0-9]{32})/.exec(log.details);
+        if (match) {
+          genuineTraceId = match[1];
+          break;
+        }
+      }
+    }
+  }
+
+  let traceUrl: string | null = null;
+  if (genuineTraceId && /^[0-9a-f]{32}$/i.test(genuineTraceId)) {
+    try {
+      const rawAppUrl = env?.appUrl ?? process.env.NEATLOGS_APP_URL;
+      if (rawAppUrl) {
+        const parsed = new URL(rawAppUrl);
+        traceUrl = `${parsed.origin}/app/traces/${genuineTraceId}`;
+      } else {
+        const ep = env?.endpoint ?? process.env.NEATLOGS_ENDPOINT ?? 'https://neatlogs.com';
+        const parsedUrl = new URL(ep);
+        if (parsedUrl.hostname.includes('ingest.neatlogs.com')) {
+          traceUrl = `https://neatlogs.com/app/traces/${genuineTraceId}`;
+        } else if (parsedUrl.protocol === 'https:') {
+          traceUrl = `${parsedUrl.origin}/app/traces/${genuineTraceId}`;
+        }
+      }
+    } catch {
+      traceUrl = `https://neatlogs.com/app/traces/${genuineTraceId}`;
+    }
+  }
+
+  return { traceId: genuineTraceId, traceUrl };
+}

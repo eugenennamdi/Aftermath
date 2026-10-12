@@ -35,4 +35,37 @@ describe('neatlogs Integration & Privacy Sanitization', () => {
     expect(result.guardrailOutcome.authorized).toBe(true);
     expect(result.status).toBe('VERIFIED_TEST_WORKFLOW_COMPLETE');
   });
+
+  it('extracts genuine traceId and generates dashboard URLs accurately', async () => {
+    const { extractNeatlogsTraceInfo } = await import('@/services/query');
+
+    const traceHex = '4bf92f3577b34da6a3ce929d0e0e4736';
+
+    // 1. JSON audit log
+    const jsonLogs = [
+      { details: JSON.stringify({ message: 'Started', traceId: traceHex }) },
+    ];
+    const res1 = extractNeatlogsTraceInfo(jsonLogs, { endpoint: 'https://eu.ingest.neatlogs.com' });
+    expect(res1.traceId).toBe(traceHex);
+    expect(res1.traceUrl).toBe(`https://neatlogs.com/app/traces/${traceHex}`);
+
+    // 2. Custom app URL
+    const res2 = extractNeatlogsTraceInfo(jsonLogs, { appUrl: 'https://custom-dashboard.neatlogs.com' });
+    expect(res2.traceId).toBe(traceHex);
+    expect(res2.traceUrl).toBe(`https://custom-dashboard.neatlogs.com/app/traces/${traceHex}`);
+
+    // 3. Fallback regex string log
+    const strLogs = [
+      { details: `incident processed with traceId: "${traceHex}" and success` },
+    ];
+    const res3 = extractNeatlogsTraceInfo(strLogs, { endpoint: 'https://neatlogs.com' });
+    expect(res3.traceId).toBe(traceHex);
+    expect(res3.traceUrl).toBe(`https://neatlogs.com/app/traces/${traceHex}`);
+
+    // 4. Missing / simulated trace
+    const emptyLogs = [{ details: JSON.stringify({ message: 'No trace' }) }];
+    const res4 = extractNeatlogsTraceInfo(emptyLogs);
+    expect(res4.traceId).toBeNull();
+    expect(res4.traceUrl).toBeNull();
+  });
 });

@@ -166,6 +166,7 @@ export class RecoveryWorker {
     turnsExecuted: number;
     toolSequence: string[];
     outcome: Record<string, unknown>;
+    traceId?: string;
   }> {
     await initNeatlogs();
 
@@ -176,6 +177,9 @@ export class RecoveryWorker {
         tags: ['recovery_worker', this.workerId],
       },
       async (workflowSpan) => {
+        const spanCtx = workflowSpan?.spanContext();
+        const traceId = spanCtx?.traceId;
+
         workflowSpan?.setAttribute('aftermath.incident_id', incident.id);
         workflowSpan?.setAttribute('aftermath.order_id', incident.orderId);
         workflowSpan?.setAttribute('aftermath.worker_id', this.workerId);
@@ -186,7 +190,11 @@ export class RecoveryWorker {
           workerId: this.workerId,
           incidentId: incident.id,
           fencingToken: incident.fencingToken,
+          traceId,
         });
+        if (traceId) {
+          console.log(`[RecoveryWorker ${this.workerId}] Processing incident ${incident.id} under neatlogs trace: ${traceId}`);
+        }
 
         const heartbeatIntervalMs = options?.heartbeatIntervalMs ?? 10000;
         const leaseDurationSeconds = options?.leaseDurationSeconds ?? 30;
@@ -215,7 +223,7 @@ export class RecoveryWorker {
         const effectiveAdapter = options?.paystackAdapter || this.paystackAdapter;
         const effectiveExecutionMode = options?.executionMode || 'PRODUCTION';
 
-        // Record processing start in audit logs with executionMode
+        // Record processing start in audit logs with executionMode and traceId
         try {
           await db.insert(auditLogs).values({
             id: `aud_${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}`,
@@ -227,6 +235,7 @@ export class RecoveryWorker {
               workerId: this.workerId,
               fencingToken: incident.fencingToken,
               executionMode: effectiveExecutionMode,
+              traceId,
             }),
           });
         } catch {
@@ -277,6 +286,7 @@ export class RecoveryWorker {
                 {
                   paystackAdapter: effectiveAdapter,
                   executionMode: effectiveExecutionMode,
+                  traceId,
                 }
               );
               executionOutcome = outcome as unknown as Record<string, unknown>;
@@ -288,7 +298,8 @@ export class RecoveryWorker {
                 incident.id,
                 incident.fencingToken,
                 this.workerId,
-                investigation.summary
+                investigation.summary,
+                { traceId }
               );
               executionOutcome = outcome as unknown as Record<string, unknown>;
               break;
@@ -299,7 +310,8 @@ export class RecoveryWorker {
                 incident.id,
                 incident.fencingToken,
                 this.workerId,
-                investigation.summary
+                investigation.summary,
+                { traceId }
               );
               executionOutcome = { status: 'RETRY_SCHEDULED', reason: investigation.summary };
               break;
@@ -310,7 +322,8 @@ export class RecoveryWorker {
                 incident.id,
                 incident.fencingToken,
                 this.workerId,
-                investigation.summary
+                investigation.summary,
+                { traceId }
               );
               executionOutcome = { status: 'ESCALATED', reason: investigation.summary };
               break;
@@ -331,6 +344,7 @@ export class RecoveryWorker {
             turnsExecuted: investigation.turnsExecuted,
             toolSequence: investigation.toolSequence,
             outcome: executionOutcome,
+            traceId,
           };
         } finally {
           if (heartbeatTimer) {

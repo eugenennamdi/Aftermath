@@ -112,6 +112,7 @@ export class RecoveryService {
     options?: {
       paystackAdapter?: import('../lib/paystack').PaystackVerificationAdapter;
       executionMode?: string;
+      traceId?: string;
     }
   ): Promise<RecoveryExecutionOutcome> {
     return await trace(
@@ -121,6 +122,7 @@ export class RecoveryService {
         tags: ['authorization_gate', 'recovery'],
       },
       async (guardrailSpan) => {
+        const traceId = options?.traceId || guardrailSpan?.spanContext()?.traceId;
         // Step 1: Pre-authorization validation of worker lease ownership & fencing token
         const [currentIncident] = await db
           .select()
@@ -363,6 +365,7 @@ export class RecoveryService {
               message: `Entitlement ${finalEntId} provisioned; awaiting independent verification`,
               entitlementId: finalEntId,
               executionMode: options?.executionMode || 'PRODUCTION',
+              traceId,
             })}, now())
           `;
 
@@ -416,7 +419,8 @@ export class RecoveryService {
             incidentId,
             fencingToken,
             leaseOwner,
-            `Post-provision verification failed: ${reason}`
+            `Post-provision verification failed: ${reason}`,
+            { traceId }
           );
 
           throw new Error(`Independent resolution verification failed: ${reason}`);
@@ -453,6 +457,7 @@ export class RecoveryService {
               message: `Autonomous recovery verified: Entitlement ${activeRecord.entitlement.id} confirmed ACTIVE`,
               entitlementId: activeRecord.entitlement.id,
               executionMode: options?.executionMode || 'PRODUCTION',
+              traceId,
             })}, now())
           `;
         });
@@ -485,7 +490,8 @@ export class RecoveryService {
     incidentId: string,
     fencingToken: number,
     leaseOwner: string,
-    summary: string
+    summary: string,
+    options?: { traceId?: string }
   ): Promise<RecoveryExecutionOutcome> {
     const [incident] = await db
       .select()
@@ -595,7 +601,11 @@ export class RecoveryService {
 
       await tx`
         INSERT INTO audit_logs (id, order_id, incident_id, action, actor, details, created_at)
-        VALUES (${auditId}, ${incident.orderId}, ${incidentId}, 'INCIDENT_RECONCILED', 'RECOVERY_WORKER', 'Incident resolved via reconciliation: existing active entitlement confirmed.', now())
+        VALUES (${auditId}, ${incident.orderId}, ${incidentId}, 'INCIDENT_RECONCILED', 'RECOVERY_WORKER', ${JSON.stringify({
+          message: 'Incident resolved via reconciliation: existing active entitlement confirmed.',
+          summary,
+          traceId: options?.traceId,
+        })}, now())
       `;
     });
 
@@ -617,7 +627,8 @@ export class RecoveryService {
     incidentId: string,
     fencingToken: number,
     leaseOwner: string,
-    errorDetail: string
+    errorDetail: string,
+    options?: { traceId?: string }
   ): Promise<void> {
     const [incident] = await db
       .select()
@@ -650,7 +661,8 @@ export class RecoveryService {
         incidentId,
         fencingToken,
         leaseOwner,
-        `RETRY_EXHAUSTED: Maximum retry attempts (${RecoveryService.MAX_INCIDENT_RETRIES}) reached without resolution. ${errorDetail}`
+        `RETRY_EXHAUSTED: Maximum retry attempts (${RecoveryService.MAX_INCIDENT_RETRIES}) reached without resolution. ${errorDetail}`,
+        options
       );
       return;
     }
@@ -684,7 +696,12 @@ export class RecoveryService {
 
       await tx`
         INSERT INTO audit_logs (id, order_id, incident_id, action, actor, details, created_at)
-        VALUES (${auditId}, ${incident.orderId}, ${incidentId}, 'RETRY_SCHEDULED', 'RECOVERY_WORKER', ${`Retry #${nextRetryCount} scheduled: ${errorDetail}`}, now())
+        VALUES (${auditId}, ${incident.orderId}, ${incidentId}, 'RETRY_SCHEDULED', 'RECOVERY_WORKER', ${JSON.stringify({
+          message: `Retry #${nextRetryCount} scheduled: ${errorDetail}`,
+          errorDetail,
+          retryCount: nextRetryCount,
+          traceId: options?.traceId,
+        })}, now())
       `;
     });
   }
@@ -697,7 +714,8 @@ export class RecoveryService {
     incidentId: string,
     fencingToken: number,
     leaseOwner: string,
-    reason: string
+    reason: string,
+    options?: { traceId?: string }
   ): Promise<void> {
     const [incident] = await db
       .select()
@@ -742,7 +760,11 @@ export class RecoveryService {
 
       await tx`
         INSERT INTO audit_logs (id, order_id, incident_id, action, actor, details, created_at)
-        VALUES (${auditId}, ${incident.orderId}, ${incidentId}, 'INCIDENT_ESCALATED', 'RECOVERY_WORKER', ${`Incident escalated: ${reason}`}, now())
+        VALUES (${auditId}, ${incident.orderId}, ${incidentId}, 'INCIDENT_ESCALATED', 'RECOVERY_WORKER', ${JSON.stringify({
+          message: `Incident escalated: ${reason}`,
+          reason,
+          traceId: options?.traceId,
+        })}, now())
       `;
     });
   }
